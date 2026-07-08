@@ -16,22 +16,24 @@ def classify_intent(state: BotState) -> BotState:
         return state
 
     ctx = state.get("action_context")
-    if ctx and isinstance(ctx, ActionContext) and ctx.original_message:
-        github_pattern = r"(?:[\w-]+/[\w-]+)?#\d+"
-        if re.search(github_pattern, raw):
-            state["command_type"] = "github"
-        else:
-            state["command_type"] = "context"
-            state["needs_llm"] = True
+    if ctx and isinstance(ctx, ActionContext):
+        if not raw or raw == "/sab":
+            state["command_type"] = "mention"
+            return state
+        if ctx.original_message:
+            github_pattern = r"(?:[\w-]+/[\w-]+)?#\d+"
+            if re.search(github_pattern, raw):
+                state["command_type"] = "github"
+            else:
+                state["command_type"] = "context"
+                state["needs_llm"] = True
+            return state
+        state["command_type"] = "mention"
         return state
 
     github_pattern = r"(?:[\w-]+/[\w-]+)?#\d+"
     if re.search(github_pattern, raw):
         state["command_type"] = "github"
-        return state
-
-    if ctx:
-        state["command_type"] = "mention"
         return state
 
     state["command_type"] = "unknown"

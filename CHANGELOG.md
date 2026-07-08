@@ -1,10 +1,10 @@
 # Changelog - Slack-Action-Bot
 
-## Bug Fix Pass: 16 Issues Resolved
+## Bug Fix Pass: 17 Issues Resolved (+ 1 found in sandbox)
 
 ### Date: 2026-07-08
 
-A full codebase audit identified **16 bugs and issues** across 8 files. All have been fixed and verified.
+A full codebase audit identified **16 bugs and issues** across 8 files. An additional bug was found during sandbox testing. All **17** have been fixed and verified.
 
 ---
 
@@ -65,6 +65,13 @@ Functional bugs that cause incorrect behavior.
 - **Before:** `import re` (never used)
 - **After:** Removed
 - **Impact:** Dead code removed for clarity.
+
+### 17. `classify_intent` cannot distinguish `/sab` command from `app_mention` event (found in sandbox)
+- **File:** `graph/nodes.py:18-35`
+- **Before:** When `action_context` existed with `original_message`, it always classified as `"context"`, even for `app_mention` events where the user hasn't given a command
+- **After:** Empty `raw_input` (or `"/sab"`) with `action_context` → `"mention"`; non-empty `raw_input` with `action_context` + `original_message` → `"context"` or `"github"`
+- **Impact:** `app_mention` events were being summarized by LLM instead of showing a simple mention suggestion. The bot now correctly shows "Hi @user! Someone mentioned you. Reply with `/sab`..." for mentions, and only uses LLM for actual `/sab` commands in threads.
+- **Found by:** Sandbox testing — the mention flow test failed because `classify_intent` returned `"context"` instead of `"mention"`.
 
 ---
 
@@ -148,10 +155,10 @@ Code quality and type safety.
 | Severity | Count | Status |
 |----------|-------|--------|
 | CRITICAL | 3 | All fixed |
-| SERIOUS | 5 | All fixed |
+| SERIOUS | 6 | All fixed |
 | MODERATE | 5 | All fixed |
 | MINOR | 3 | All fixed |
-| **Total** | **16** | **All fixed** |
+| **Total** | **17** | **All fixed** |
 
 ---
 
