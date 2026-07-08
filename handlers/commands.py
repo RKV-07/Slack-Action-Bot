@@ -9,10 +9,11 @@ def handle_sab_command(command: dict, client) -> str:
     thread_ts = command.get("thread_ts")
 
     action_ctx = None
+    thread_messages = []
     if thread_ts:
         try:
             msg_response = client.conversations_replies(
-                channel=channel_id, ts=thread_ts, limit=1
+                channel=channel_id, ts=thread_ts, limit=100
             )
             messages = msg_response.get("messages", [])
             if messages:
@@ -24,6 +25,11 @@ def handle_sab_command(command: dict, client) -> str:
                     original_message=msg.get("text", ""),
                     mentioned_by=msg.get("user", "unknown"),
                 )
+                thread_messages = [
+                    {"user": m.get("user", "unknown"), "text": m.get("text", "")}
+                    for m in messages
+                    if not m.get("bot_id")
+                ]
         except Exception as e:
             print(f"Error fetching thread context: {e}")
 
@@ -40,6 +46,8 @@ def handle_sab_command(command: dict, client) -> str:
         "response_message": "",
         "needs_llm": False,
         "llm_summary": None,
+        "thread_messages": thread_messages,
+        "max_messages": 10,
     }
 
     result = sab_graph.invoke(initial_state)

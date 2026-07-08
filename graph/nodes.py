@@ -2,9 +2,9 @@ import re
 from datetime import datetime
 from typing import Optional
 from .state import BotState, ActionContext, ReminderData
-from services.github_service import fetch_github_issue, detect_github_refs
+from services.github_service import fetch_github_issue, detect_github_refs, fetch_latest_issues, fetch_latest_prs
 from services.reminder_service import schedule_reminder
-from services.llm_service import summarize_context
+from services.llm_service import summarize_context, summarize_thread_messages, generate_mention_reply
 from config import DEFAULT_GITHUB_REPO
 
 
@@ -15,10 +15,18 @@ def classify_intent(state: BotState) -> BotState:
         state["command_type"] = "reminder"
         return state
 
+    if re.search(r'\b(latest|recent|list)\b', raw) and re.search(r'\b(issues?|prs?|pull)\b', raw):
+        state["command_type"] = "latest_github"
+        return state
+
     ctx = state.get("action_context")
     if ctx and isinstance(ctx, ActionContext):
         if not raw or raw == "/sab":
-            state["command_type"] = "mention"
+            if state.get("thread_messages"):
+                state["command_type"] = "context"
+                state["needs_llm"] = True
+            else:
+                state["command_type"] = "mention"
             return state
         if ctx.original_message:
             github_pattern = r"(?:[\w-]+/[\w-]+)?#\d+"
@@ -60,6 +68,42 @@ def fetch_github_issues(state: BotState) -> BotState:
         issue_data = fetch_github_issue(repo, issue_num)
         if issue_data:
             results.append(issue_data)
+    state["github_results"] = results
+    return state
+
+
+def fetch_latest_github_items(state: BotState) -> BotState:
+    raw = state["raw_input"].lower()
+    repo = DEFAULT_GITHUB_REPO
+    
+    repo_match = re.search(r'([\w-]+/[\w-]+)', state["raw_input"])
+    if repo_match:
+        repo = repo_match.group(1)
+    
+    results = []
+    if "pr" in raw or "pull" in raw:
+        prs = fetch_latest_prs(repo, count=5)
+        for pr in prs:
+            results.append({
+                "title": pr["title"],
+                "state": pr["state"],
+                "url": pr["url"],
+                "number": pr["number"],
+                "repo": repo,
+                "type": "PR",
+            })
+    else:
+        issues = fetch_latest_issues(repo, count=5)
+        for issue in issues:
+            results.append({
+                "title": issue["title"],
+                "state": issue["state"],
+                "url": issue["url"],
+                "number": issue["number"],
+                "repo": repo,
+                "type": "Issue",
+            })
+    
     state["github_results"] = results
     return state
 
@@ -110,11 +154,19 @@ def schedule_reminder_node(state: BotState) -> BotState:
 
 def summarize_action(state: BotState) -> BotState:
     if state.get("needs_llm"):
-        ctx = state.get("action_context")
-        if ctx and isinstance(ctx, ActionContext) and ctx.original_message:
-            summary = summarize_context(ctx.original_message, state["raw_input"])
+        thread_messages = state.get("thread_messages", [])
+        max_messages = state.get("max_messages", 10)
+        
+        if thread_messages:
+            summary = summarize_thread_messages(thread_messages, max_messages)
             state["llm_summary"] = summary
             state["response_message"] = summary
+        else:
+            ctx = state.get("action_context")
+            if ctx and isinstance(ctx, ActionContext) and ctx.original_message:
+                summary = summarize_context(ctx.original_message, state["raw_input"])
+                state["llm_summary"] = summary
+                state["response_message"] = summary
     return state
 
 
@@ -137,8 +189,9 @@ def build_github_response(state: BotState) -> BotState:
         parts = []
         for r in results:
             status = "Open" if r["state"] == "open" else "Closed"
+            item_type = r.get("type", "Issue")
             parts.append(
-                f"*{r['title']}*\nStatus: {status}\n<{r['url']}|View on GitHub>"
+                f"*[{item_type} #{r['number']}] {r['title']}*\nStatus: {status}\n<{r['url']}|View on GitHub>"
             )
         state["response_message"] = "\n\n".join(parts)
     else:
@@ -149,10 +202,10 @@ def build_github_response(state: BotState) -> BotState:
 def build_mention_response(state: BotState) -> BotState:
     ctx = state.get("action_context")
     if ctx:
-        state["response_message"] = (
-            f"Hi <@{state['user_id']}>! Someone mentioned you.\n"
-            f"Reply with `/sab` to handle this action."
-        )
+        context = f"Channel: {state['channel_id']}, User: {state['user_id']}"
+        original = ctx.original_message or "No message context"
+        reply = generate_mention_reply(context, original)
+        state["response_message"] = reply
     return state
 
 
@@ -161,6 +214,8 @@ def build_unknown_response(state: BotState) -> BotState:
         "I can help you with:\n"
         "• `/sab` — Capture action context\n"
         "• `/sab -r \"task\" @30m` — Set a reminder\n"
-        "• Mention `#123` or `org/repo#456` for GitHub info"
+        "• Mention `#123` or `org/repo#456` for GitHub info\n"
+        "• `/sab latest issues` — Fetch latest issues\n"
+        "• `/sab latest prs` — Fetch latest PRs"
     )
     return state

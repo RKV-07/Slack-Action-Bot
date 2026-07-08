@@ -40,10 +40,16 @@ def handle_app_mention(event: dict, client, say):
 
     try:
         msg_response = client.conversations_replies(
-            channel=channel_id, ts=event["ts"], limit=1
+            channel=channel_id, ts=event["ts"], limit=100
         )
         messages = msg_response.get("messages", [])
         original_msg = messages[0]["text"] if messages else "No message context available"
+        
+        thread_messages = [
+            {"user": m.get("user", "unknown"), "text": m.get("text", "")}
+            for m in messages
+            if not m.get("bot_id")
+        ]
 
         initial_state = {
             "command_type": "unknown",
@@ -64,6 +70,8 @@ def handle_app_mention(event: dict, client, say):
             "response_message": "",
             "needs_llm": False,
             "llm_summary": None,
+            "thread_messages": thread_messages,
+            "max_messages": 10,
         }
 
         result = sab_graph.invoke(initial_state)

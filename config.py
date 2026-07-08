@@ -10,6 +10,7 @@ SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 DEFAULT_GITHUB_REPO = os.environ.get("DEFAULT_GITHUB_REPO", "owner/repo")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+LLAMA_BASE_URL = os.environ.get("LLAMA_BASE_URL", "http://localhost:8080")
 
 _required = {
     "SLACK_BOT_TOKEN": SLACK_BOT_TOKEN,
