@@ -53,7 +53,7 @@ def start():
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     print("Starting Slack Advanced Actions Bot...")
     print("Features:")
-    print("  - Summarize messages using Gemini API")
+    print("  - Summarize messages using local LLM (Qwen3-8B)")
     print("  - Set reminders with APS Scheduler")
     print("  - Fetch GitHub issues and PRs")
     print("  - Smart replies to mentions")

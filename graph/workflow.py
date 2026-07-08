@@ -13,6 +13,8 @@ from .nodes import (
     build_github_response,
     build_mention_response,
     build_unknown_response,
+    build_greeting_response,
+    test_llm_connection,
 )
 
 
@@ -28,6 +30,10 @@ def route_after_classification(state: BotState) -> str:
         return "summarize"
     if cmd == "mention":
         return "mention_response"
+    if cmd == "greeting":
+        return "greeting_response"
+    if cmd == "test_llm":
+        return "test_llm"
     return "unknown_response"
 
 
@@ -45,6 +51,8 @@ def build_graph() -> CompiledStateGraph:
     workflow.add_node("github_response", build_github_response)
     workflow.add_node("mention_response", build_mention_response)
     workflow.add_node("unknown_response", build_unknown_response)
+    workflow.add_node("greeting_response", build_greeting_response)
+    workflow.add_node("test_llm", test_llm_connection)
 
     workflow.set_entry_point("classify")
 
@@ -58,6 +66,8 @@ def build_graph() -> CompiledStateGraph:
             "summarize": "summarize",
             "mention_response": "mention_response",
             "unknown_response": "unknown_response",
+            "greeting_response": "greeting_response",
+            "test_llm": "test_llm",
         },
     )
 
@@ -75,6 +85,8 @@ def build_graph() -> CompiledStateGraph:
 
     workflow.add_edge("mention_response", END)
     workflow.add_edge("unknown_response", END)
+    workflow.add_edge("greeting_response", END)
+    workflow.add_edge("test_llm", END)
 
     return workflow.compile()
 

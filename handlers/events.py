@@ -45,6 +45,9 @@ def handle_app_mention(event: dict, client, say):
         messages = msg_response.get("messages", [])
         original_msg = messages[0]["text"] if messages else "No message context available"
         
+        import re
+        clean_msg = re.sub(r'<@[A-Z0-9]+>', '', original_msg).strip()
+        
         thread_messages = [
             {"user": m.get("user", "unknown"), "text": m.get("text", "")}
             for m in messages
@@ -66,7 +69,7 @@ def handle_app_mention(event: dict, client, say):
             "user_id": user_id,
             "channel_id": channel_id,
             "message_ts": event["ts"],
-            "raw_input": original_msg,
+            "raw_input": clean_msg if clean_msg else original_msg,
             "response_message": "",
             "needs_llm": False,
             "llm_summary": None,

@@ -1,5 +1,4 @@
 import re
-from datetime import datetime
 from typing import Optional
 from .state import BotState, ActionContext, ReminderData
 from services.github_service import fetch_github_issue, detect_github_refs, fetch_latest_issues, fetch_latest_prs
@@ -11,6 +10,10 @@ from config import DEFAULT_GITHUB_REPO
 def classify_intent(state: BotState) -> BotState:
     raw = state["raw_input"].lower().strip()
 
+    if raw.startswith("test llm") or raw == "test":
+        state["command_type"] = "test_llm"
+        return state
+
     if "-r" in raw or re.search(r'\bremind\b', raw):
         state["command_type"] = "reminder"
         return state
@@ -18,6 +21,22 @@ def classify_intent(state: BotState) -> BotState:
     if re.search(r'\b(latest|recent|list)\b', raw) and re.search(r'\b(issues?|prs?|pull)\b', raw):
         state["command_type"] = "latest_github"
         return state
+
+    greeting_words = [
+        r'^hi$', r'^hey$', r'^hello$', r'^hlo$', r'^hlw$', r'^heu$',
+        r'^yo$', r'^sup$', r'^gm$', r'^gn$', r'^bye$', r'^thanks?$',
+        r'^cheers$', r'^howdy$', r'^greetings$', r'^welcome$',
+        r'^how\s+are\s+u$', r'^how\s+are\s+you$',
+        r'^what\'?s?\s+up$', r'^good\s+morning$', r'^good\s+night$',
+        r'^help$', r'^what\s+can\s+you\s+do$', r'^what\s+do\s+you\s+do$',
+        r'^hi\s+bot$', r'^hey\s+bot$', r'^hello\s+bot$',
+        r'^hi\s+there$', r'^hey\s+there$', r'^hello\s+there$',
+    ]
+    
+    for pattern in greeting_words:
+        if re.match(pattern, raw):
+            state["command_type"] = "greeting"
+            return state
 
     ctx = state.get("action_context")
     if ctx and isinstance(ctx, ActionContext):
@@ -33,6 +52,10 @@ def classify_intent(state: BotState) -> BotState:
             if re.search(github_pattern, raw):
                 state["command_type"] = "github"
             else:
+                for pattern in greeting_words:
+                    if re.match(pattern, raw):
+                        state["command_type"] = "greeting"
+                        return state
                 state["command_type"] = "context"
                 state["needs_llm"] = True
             return state
@@ -216,6 +239,53 @@ def build_unknown_response(state: BotState) -> BotState:
         "• `/sab -r \"task\" @30m` — Set a reminder\n"
         "• Mention `#123` or `org/repo#456` for GitHub info\n"
         "• `/sab latest issues` — Fetch latest issues\n"
-        "• `/sab latest prs` — Fetch latest PRs"
+        "• `/sab latest prs` — Fetch latest PRs\n"
+        "• `/sab test` — Test LLM connection\n"
+        "• Say hi/hey — Get a greeting!"
     )
+    return state
+
+
+def build_greeting_response(state: BotState) -> BotState:
+    from services.llm_service import _chat_completion
+    
+    user_msg = state["raw_input"].lower().strip()
+    
+    quick_replies = {
+        "hi": "Hey there! 👋 I'm Slack Actions Bot. I can help you with reminders, GitHub lookups, and message summaries. Just ask!",
+        "hey": "Hey! 👋 What's up? I can set reminders, fetch GitHub issues, or summarize conversations for you!",
+        "hello": "Hello! 👋 I'm your Slack Actions Bot. Need a reminder, GitHub info, or a summary? I got you!",
+        "heu": "Hey! 👋 How can I help you today?",
+        "hlo": "Hello! 👋 I can help with reminders, GitHub, and more!",
+        "hlw": "Hi there! 👋 What can I do for you?",
+        "hi bot": "Hey there! 👋 I'm Slack Actions Bot. Ask me anything!",
+        "hey bot": "Hey! 👋 What's up? I can help with reminders, GitHub, and summaries!",
+        "hello bot": "Hello! 👋 I'm here to help. Try `/sab test` to test my LLM!",
+        "how are u": "I'm doing great! 😊 Just a bot, but ready to help you out!",
+        "how are you": "I'm awesome! 😊 How can I help you today?",
+        "help": "I can help you with:\n• Reminders: `/sab -r \"task\" @30m`\n• GitHub: mention `org/repo#123`\n• Summaries: mention me in a thread\n• Type `test llm` to test my AI!",
+        "what can you do": "I can help with:\n• `/sab -r \"task\" @30m` — Set reminders\n• GitHub lookups — mention issues/PRs\n• Thread summaries — mention me in threads\n• Chat with me — just say hi!",
+    }
+    
+    if user_msg in quick_replies:
+        state["response_message"] = quick_replies[user_msg]
+        return state
+    
+    prompt = (
+        f"You are a friendly Slack bot. A user said: \"{user_msg}\"\n"
+        f"Reply in 1 short sentence. Be friendly. Mention you can help with reminders, GitHub, and summaries."
+    )
+    
+    reply = _chat_completion(prompt, max_tokens=60)
+    state["response_message"] = reply if reply else "Hey there! 👋 I'm Slack Actions Bot. How can I help you?"
+    return state
+
+
+def test_llm_connection(state: BotState) -> BotState:
+    from services.llm_service import _chat_completion
+    result = _chat_completion("Say 'LLM is working!' in exactly 5 words or less", max_tokens=20)
+    if result:
+        state["response_message"] = f"✓ LLM is connected!\nResponse: {result}"
+    else:
+        state["response_message"] = "✗ LLM connection failed. Check if llama-server is running."
     return state
