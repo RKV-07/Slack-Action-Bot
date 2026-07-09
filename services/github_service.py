@@ -1,10 +1,17 @@
 import re
+import requests
 from typing import Optional
 from config import GITHUB_TOKEN, DEFAULT_GITHUB_REPO
 
+_GITHUB_API = "https://api.github.com"
+
+
+def _headers() -> dict:
+    return {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
+
 
 def detect_github_refs(text: str) -> list[str]:
-    pattern = r"(?:([\w-]+)/([\w-]+))?#(\d+)"
+    pattern = r'(?:(\w[\w-]*)/(\w[\w-]*))?#(\d+)'
     matches = re.findall(pattern, text)
     refs = []
     for owner, repo, num in matches:
@@ -16,19 +23,15 @@ def detect_github_refs(text: str) -> list[str]:
 
 
 def fetch_github_issue(repo: str, issue_number: int) -> Optional[dict]:
-    import requests
-
     if not GITHUB_TOKEN:
-        print("GitHub API error: GITHUB_TOKEN is not set")
+        print("[GitHub] GITHUB_TOKEN not set")
         return None
 
-    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
-    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-
+    url = f"{_GITHUB_API}/repos/{repo}/issues/{issue_number}"
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
+        resp = requests.get(url, headers=_headers(), timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
             return {
                 "title": data["title"],
                 "state": data["state"],
@@ -38,59 +41,55 @@ def fetch_github_issue(repo: str, issue_number: int) -> Optional[dict]:
                 "number": data["number"],
                 "repo": repo,
             }
-    except Exception as e:
-        print(f"GitHub API error: {e}")
+        print(f"[GitHub] {repo}#{issue_number}: HTTP {resp.status_code}")
+    except requests.RequestException as e:
+        print(f"[GitHub] Error fetching {repo}#{issue_number}: {e}")
     return None
 
 
 def fetch_latest_issues(repo: str, count: int = 5) -> list[dict]:
-    import requests
-
     if not GITHUB_TOKEN:
-        print("GitHub API error: GITHUB_TOKEN is not set")
+        print("[GitHub] GITHUB_TOKEN not set")
         return []
 
-    url = f"https://api.github.com/repos/{repo}/issues"
-    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    url = f"{_GITHUB_API}/repos/{repo}/issues"
     params = {"state": "open", "per_page": count, "sort": "updated", "direction": "desc"}
 
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=10)
-        if response.status_code == 200:
-            issues = response.json()
+        resp = requests.get(url, headers=_headers(), params=params, timeout=10)
+        if resp.status_code == 200:
+            items = resp.json()
             return [
                 {
-                    "title": issue["title"],
-                    "state": issue["state"],
-                    "url": issue["html_url"],
-                    "body": issue.get("body", "")[:500],
-                    "labels": [l["name"] for l in issue.get("labels", [])],
-                    "number": issue["number"],
+                    "title": item["title"],
+                    "state": item["state"],
+                    "url": item["html_url"],
+                    "body": item.get("body", "")[:500],
+                    "number": item["number"],
                     "repo": repo,
-                    "is_pr": "pull_request" in issue,
+                    "is_pr": "pull_request" in item,
                 }
-                for issue in issues
+                for item in items
+                if "pull_request" not in item
             ]
-    except Exception as e:
-        print(f"GitHub API error: {e}")
+        print(f"[GitHub] Latest issues for {repo}: HTTP {resp.status_code}")
+    except requests.RequestException as e:
+        print(f"[GitHub] Error fetching latest issues: {e}")
     return []
 
 
 def fetch_latest_prs(repo: str, count: int = 5) -> list[dict]:
-    import requests
-
     if not GITHUB_TOKEN:
-        print("GitHub API error: GITHUB_TOKEN is not set")
+        print("[GitHub] GITHUB_TOKEN not set")
         return []
 
-    url = f"https://api.github.com/repos/{repo}/pulls"
-    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    url = f"{_GITHUB_API}/repos/{repo}/pulls"
     params = {"state": "open", "per_page": count, "sort": "updated", "direction": "desc"}
 
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=10)
-        if response.status_code == 200:
-            prs = response.json()
+        resp = requests.get(url, headers=_headers(), params=params, timeout=10)
+        if resp.status_code == 200:
+            prs = resp.json()
             return [
                 {
                     "title": pr["title"],
@@ -103,6 +102,7 @@ def fetch_latest_prs(repo: str, count: int = 5) -> list[dict]:
                 }
                 for pr in prs
             ]
-    except Exception as e:
-        print(f"GitHub API error: {e}")
+        print(f"[GitHub] Latest PRs for {repo}: HTTP {resp.status_code}")
+    except requests.RequestException as e:
+        print(f"[GitHub] Error fetching latest PRs: {e}")
     return []

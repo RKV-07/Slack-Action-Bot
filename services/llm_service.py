@@ -2,82 +2,87 @@ import requests
 import json
 from config import LLAMA_BASE_URL
 
+PERSONA = (
+    "You are Slack Actions Bot, a friendly Slack assistant. "
+    "Be concise, casual, and helpful. Use occasional emoji. "
+    "Keep replies short (1-3 sentences max) unless asked for detail."
+)
 
-def _chat_completion(prompt: str, max_tokens: int = 500, enable_thinking: bool = False) -> str:
+# Set to True ONLY if running a reasoning model like DeepSeek-R1 local
+# Set to False for standard Llama 3/3.1 models
+USE_REASONING_BYPASS = True
+_NO_THINK_PREFIX = "/no_think\n"
+
+
+def _chat_completion(user_msg: str, max_tokens: int = 500, system_msg: str = None) -> str:
     url = f"{LLAMA_BASE_URL}/v1/chat/completions"
-    
-    if not enable_thinking:
-        prompt = f"/no_think\n{prompt}"
-    
+
+    if USE_REASONING_BYPASS:
+        user_msg = f"{_NO_THINK_PREFIX}{user_msg}"
+
+    messages = []
+    if system_msg:
+        messages.append({"role": "system", "content": system_msg})
+    messages.append({"role": "user", "content": user_msg})
+
     data = {
         "model": "local",
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "max_tokens": max_tokens,
         "temperature": 0.3,
     }
     try:
-        response = requests.post(url, json=data, timeout=60)
-        if response.status_code == 200:
-            try:
-                result = response.json()
-                message = result["choices"][0]["message"]
-                content = message.get("content", "")
-                reasoning = message.get("reasoning_content", "")
-                final_content = content or reasoning
-                return final_content.strip() if final_content else ""
-            except (KeyError, IndexError, json.JSONDecodeError) as e:
-                print(f"LLM parse error: {e}")
-                return ""
-        else:
-            print(f"LLM API error: {response.status_code}")
-            return ""
-    except requests.exceptions.Timeout:
-        print("LLM API timeout")
-        return ""
-    except requests.exceptions.ConnectionError:
-        print("LLM API connection error - is the server running?")
+        # Local LLM text generation can take a moment; push timeout to 90 seconds
+        resp = requests.post(url, json=data, timeout=90)
+        if resp.status_code == 200:
+            result = resp.json()
+            message = result["choices"][0]["message"]
+
+            content = message.get("content", "")
+            reasoning = message.get("reasoning_content", "")
+
+            # Robust fallback logic to extract text cleanly regardless of backend configuration
+            final = content if content else reasoning
+            return final.strip() if final else ""
+        print(f"[LLM] API error: HTTP {resp.status_code}")
         return ""
     except Exception as e:
-        print(f"LLM error: {e}")
+        print(f"[LLM] Error: {type(e).__name__}: {e}")
         return ""
+
+
+def generate_reply(user_msg: str) -> str:
+    """Generate a persona-consistent reply for casual messages."""
+    return _chat_completion(user_msg, max_tokens=150, system_msg=PERSONA)
 
 
 def summarize_context(original_message: str, user_input: str) -> str:
+    """Summarize an action item from thread context."""
     prompt = (
         f"Summarize this action item concisely:\n\n"
         f"Original message: {original_message}\n"
         f"User note: {user_input}\n\n"
-        f"Provide a 1-2 sentence summary of what needs to be done."
+        f"What needs to be done?"
     )
-    result = _chat_completion(prompt)
+    result = _chat_completion(prompt, max_tokens=150, system_msg=PERSONA)
     return result if result else f"Original message: {original_message}"
 
 
 def summarize_thread_messages(messages: list[dict], max_messages: int = 10) -> str:
+    """Summarize a Slack thread conversation."""
     if not messages:
         return "No messages to summarize."
 
-    limited_messages = messages[:max_messages]
+    limited = messages[:max_messages]
     thread_text = "\n".join([
         f"User {m.get('user', 'unknown')}: {m.get('text', '')}"
-        for m in limited_messages
+        for m in limited
     ])
 
     prompt = (
-        f"Summarize this Slack conversation concisely:\n\n"
+        f"Summarize this Slack conversation:\n\n"
         f"{thread_text}\n\n"
-        f"Provide a clear summary of the key points, decisions, and action items."
+        f"Key points, decisions, and action items?"
     )
-    result = _chat_completion(prompt)
-    return result if result else "\n".join([f"- {m.get('text', '')}" for m in limited_messages])
-
-
-def generate_mention_reply(context: str, original_message: str) -> str:
-    prompt = (
-        f"You are a helpful Slack bot. Generate a concise, friendly reply to a mention.\n\n"
-        f"Context: {context}\n"
-        f"Original message: {original_message}\n\n"
-        f"Generate a brief, helpful response."
-    )
-    result = _chat_completion(prompt)
-    return result if result else "Hey! You were mentioned. Use `/sab` to handle this."
+    result = _chat_completion(prompt, max_tokens=200, system_msg=PERSONA)
+    return result if result else "\n".join([f"- {m.get('text', '')}" for m in limited])

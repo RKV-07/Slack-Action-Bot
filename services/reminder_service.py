@@ -28,22 +28,23 @@ def _send_reminder(user_id: str, text: str, channel_id: str):
     try:
         client.chat_postMessage(
             channel=channel_id,
-            text=f"Reminder: {text}",
+            text=f"<@{user_id}> Reminder: {text}",
         )
     except Exception as e:
-        print(f"Failed to send reminder: {e}")
+        print(f"[Reminder] Failed to send: {e}")
 
 
-def schedule_reminder(user_id: str, text: str, delay_seconds: int, channel_id: str = None):
+def schedule_reminder(user_id: str, text: str, delay_seconds: int, channel_id: str):
     _ensure_scheduler()
-    target_channel = channel_id or user_id
     run_date = datetime.now() + timedelta(seconds=delay_seconds)
+    # UUID-based job IDs prevent collision when same user schedules multiple reminders
+    job_id = f"reminder_{uuid.uuid4().hex[:12]}"
     scheduler.add_job(
         _send_reminder,
         "date",
         run_date=run_date,
-        args=[user_id, text, target_channel],
-        id=f"reminder_{user_id}_{uuid.uuid4().hex[:8]}",
+        args=[user_id, text, channel_id],
+        id=job_id,
         replace_existing=False,
     )
 

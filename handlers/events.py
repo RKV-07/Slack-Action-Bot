@@ -1,5 +1,8 @@
+import threading
+import re
 from graph.workflow import sab_graph
 from services.github_service import detect_github_refs, fetch_github_issue
+from handlers.shared import fetch_thread_messages, build_initial_state
 
 
 def handle_message_event(event: dict, client, say) -> bool:
@@ -32,53 +35,38 @@ def handle_message_event(event: dict, client, say) -> bool:
     return False
 
 
+def _execute_graph_async(state: dict, say):
+    try:
+        # Run the local Llama pipeline safely in a separate thread
+        result = sab_graph.invoke(state)
+        say(text=result.get("response_message", "Hey! How can I help you?"))
+    except Exception as e:
+        print(f"[Graph Error] Failed background execution: {e}")
+        say(text="Sorry, I ran into an error processing that request.")
+
+
 def handle_app_mention(event: dict, client, say):
-    from graph.state import ActionContext
+    # Check if this is a Slack retry to drop duplicate requests immediately
+    if event.get("headers", {}).get("X-Slack-Retry-Num"):
+        return
 
     user_id = event["user"]
     channel_id = event["channel"]
+    raw_text = event.get("text", "")
+    clean_msg = re.sub(r'<@[A-Za-z0-9]+>', '', raw_text).strip()
 
-    try:
-        msg_response = client.conversations_replies(
-            channel=channel_id, ts=event["ts"], limit=100
-        )
-        messages = msg_response.get("messages", [])
-        original_msg = messages[0]["text"] if messages else "No message context available"
-        
-        import re
-        clean_msg = re.sub(r'<@[A-Z0-9]+>', '', original_msg).strip()
-        
-        thread_messages = [
-            {"user": m.get("user", "unknown"), "text": m.get("text", "")}
-            for m in messages
-            if not m.get("bot_id")
-        ]
+    original_msg, thread_messages = fetch_thread_messages(client, channel_id, event["ts"])
 
-        initial_state = {
-            "command_type": "unknown",
-            "action_context": ActionContext(
-                user_id=user_id,
-                channel_id=channel_id,
-                message_ts=event["ts"],
-                original_message=original_msg,
-                mentioned_by=user_id,
-            ),
-            "reminder_data": None,
-            "github_refs": [],
-            "github_results": [],
-            "user_id": user_id,
-            "channel_id": channel_id,
-            "message_ts": event["ts"],
-            "raw_input": clean_msg if clean_msg else original_msg,
-            "response_message": "",
-            "needs_llm": False,
-            "llm_summary": None,
-            "thread_messages": thread_messages,
-            "max_messages": 10,
-        }
+    state = build_initial_state(
+        user_id=user_id,
+        channel_id=channel_id,
+        message_ts=event["ts"],
+        raw_input=clean_msg,
+        original_message=original_msg or raw_text,
+        mentioned_by=user_id,
+        thread_messages=thread_messages,
+    )
 
-        result = sab_graph.invoke(initial_state)
-        say(result.get("response_message", "Hey! You were mentioned."))
-    except Exception as e:
-        print(f"Error in handle_app_mention: {e}")
-        say(f"Hi <@{user_id}>! You were mentioned. Use `/sab` to handle this.")
+    # Spin off graph invocation to a background thread so the event loop can finish within 3s
+    thread = threading.Thread(target=_execute_graph_async, args=(state, say))
+    thread.start()

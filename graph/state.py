@@ -8,7 +8,6 @@ class ActionContext(BaseModel):
     message_ts: str
     original_message: Optional[str] = None
     mentioned_by: Optional[str] = None
-    github_refs: list[str] = []
 
 
 class ReminderData(BaseModel):
@@ -19,7 +18,10 @@ class ReminderData(BaseModel):
 
 
 class BotState(TypedDict):
-    command_type: Literal["context", "reminder", "github", "mention", "unknown", "latest_github", "greeting", "test_llm"]
+    command_type: Literal[
+        "context", "reminder", "github", "mention",
+        "latest_github", "greeting", "test_llm", "help", "chat"
+    ]
     action_context: Optional[ActionContext]
     reminder_data: Optional[ReminderData]
     github_refs: list[str]

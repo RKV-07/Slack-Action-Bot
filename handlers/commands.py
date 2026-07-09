@@ -1,5 +1,18 @@
+import threading
 from graph.workflow import sab_graph
-from graph.state import ActionContext
+from handlers.shared import fetch_thread_messages, build_initial_state
+
+
+def _execute_command_graph_async(state: dict, client, command: dict):
+    try:
+        result = sab_graph.invoke(state)
+        client.chat_postMessage(
+            channel=command["channel_id"],
+            text=result.get("response_message", "Something went wrong."),
+            thread_ts=command.get("thread_ts"),
+        )
+    except Exception as e:
+        print(f"[Command Error] Failed background execution: {e}")
 
 
 def handle_sab_command(command: dict, client) -> str:
@@ -8,47 +21,28 @@ def handle_sab_command(command: dict, client) -> str:
     text = command.get("text", "")
     thread_ts = command.get("thread_ts")
 
-    action_ctx = None
+    original_msg = ""
     thread_messages = []
+    mentioned_by = None
+
     if thread_ts:
-        try:
-            msg_response = client.conversations_replies(
-                channel=channel_id, ts=thread_ts, limit=100
-            )
-            messages = msg_response.get("messages", [])
-            if messages:
-                msg = messages[0]
-                action_ctx = ActionContext(
-                    user_id=user_id,
-                    channel_id=channel_id,
-                    message_ts=thread_ts,
-                    original_message=msg.get("text", ""),
-                    mentioned_by=msg.get("user", "unknown"),
-                )
-                thread_messages = [
-                    {"user": m.get("user", "unknown"), "text": m.get("text", "")}
-                    for m in messages
-                    if not m.get("bot_id")
-                ]
-        except Exception as e:
-            print(f"Error fetching thread context: {e}")
+        original_msg, thread_messages = fetch_thread_messages(client, channel_id, thread_ts)
+        if thread_messages:
+            mentioned_by = thread_messages[0].get("user")
 
-    initial_state = {
-        "command_type": "unknown",
-        "action_context": action_ctx,
-        "reminder_data": None,
-        "github_refs": [],
-        "github_results": [],
-        "user_id": user_id,
-        "channel_id": channel_id,
-        "message_ts": thread_ts or "",
-        "raw_input": text if text else "",
-        "response_message": "",
-        "needs_llm": False,
-        "llm_summary": None,
-        "thread_messages": thread_messages,
-        "max_messages": 10,
-    }
+    state = build_initial_state(
+        user_id=user_id,
+        channel_id=channel_id,
+        message_ts=thread_ts or "",
+        raw_input=text or "",
+        original_message=original_msg,
+        mentioned_by=mentioned_by,
+        thread_messages=thread_messages,
+    )
 
-    result = sab_graph.invoke(initial_state)
-    return result.get("response_message", "Something went wrong.")
+    # Spin off thread to prevent Slack timeout
+    thread = threading.Thread(target=_execute_command_graph_async, args=(state, client, command))
+    thread.start()
+
+    # Return an immediate acknowledgment message back to main.py
+    return "Processing your request... :hourglass_flowing_sand:"
