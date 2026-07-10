@@ -3,7 +3,7 @@ import atexit
 import threading
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from config import SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET, GITHUB_TOKEN, MCP_GITHUB_ENABLED, MCP_FETCH_ENABLED
+from config import SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET, GITHUB_TOKEN, MCP_GITHUB_ENABLED, MCP_FETCH_ENABLED, MCP_SLACK_ENABLED
 from handlers.commands import handle_sab_command
 from handlers.events import handle_message_event, handle_app_mention
 from services.reminder_service import shutdown_scheduler
@@ -92,7 +92,7 @@ def start():
     atexit.register(shutdown_scheduler)
     atexit.register(_cleanup_mcp)
     # Initialize MCP servers in background thread so bot boots immediately
-    if MCP_GITHUB_ENABLED or MCP_FETCH_ENABLED:
+    if MCP_GITHUB_ENABLED or MCP_FETCH_ENABLED or MCP_SLACK_ENABLED:
         t = threading.Thread(target=init_mcp_servers, daemon=True)
         t.start()
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)

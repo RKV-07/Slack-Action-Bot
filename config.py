@@ -15,6 +15,10 @@ LLAMA_PARALLEL = os.environ.get("LLAMA_PARALLEL")
 # MCP Server Configuration (MCP primary, direct API as fallback)
 MCP_GITHUB_ENABLED = os.environ.get("MCP_GITHUB_ENABLED", "true").lower() == "true"
 MCP_FETCH_ENABLED = os.environ.get("MCP_FETCH_ENABLED", "true").lower() == "true"
+MCP_SLACK_ENABLED = os.environ.get("MCP_SLACK_ENABLED", "true").lower() == "true"
+
+# Max messages used as context when summarizing Slack conversations
+SLACK_SUMMARY_MAX_MESSAGES = int(os.environ.get("SLACK_SUMMARY_MAX_MESSAGES", "25"))
 
 _required = {
     "SLACK_BOT_TOKEN": SLACK_BOT_TOKEN,

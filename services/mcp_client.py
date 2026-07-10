@@ -175,6 +175,22 @@ def setup_mcp_servers(github_token: str = None):
     except Exception as e:
         print(f"[MCP] Failed to connect fetch server: {e}")
 
+    try:
+        # Slack MCP Server (custom, in-repo; uses the bot token via slack-sdk)
+        import os
+        import sys
+
+        slack_server_path = os.path.join(os.path.dirname(__file__), "mcp_slack_server.py")
+        mcp_client.connect(
+            name="slack",
+            command=sys.executable,
+            args=[slack_server_path],
+            env=dict(os.environ),
+        )
+        print("[MCP] Slack server ready")
+    except Exception as e:
+        print(f"[MCP] Failed to connect slack server: {e}")
+
 
 def call_github_tool(tool_name: str, arguments: dict) -> str:
     """Convenience: Call a GitHub MCP tool."""
@@ -192,3 +208,12 @@ def call_fetch_tool(tool_name: str, arguments: dict) -> str:
     except Exception as e:
         print(f"[MCP] Fetch tool error: {e}")
         return f"Error calling fetch tool: {e}"
+
+
+def call_slack_tool(tool_name: str, arguments: dict) -> str:
+    """Convenience: Call a Slack MCP tool."""
+    try:
+        return mcp_client.call_tool("slack", tool_name, arguments)
+    except Exception as e:
+        print(f"[MCP] Slack tool error: {e}")
+        return f"Error calling Slack tool: {e}"

@@ -196,20 +196,39 @@ def schedule_reminder_node(state: BotState) -> BotState:
 
 
 def summarize_action(state: BotState) -> BotState:
-    if state.get("needs_llm"):
-        thread_messages = state.get("thread_messages", [])
-        max_messages = state.get("max_messages", 25)
+    if not state.get("needs_llm"):
+        return state
 
-        if thread_messages:
-            summary = summarize_thread_messages(thread_messages, max_messages)
-            state["llm_summary"] = summary
-            state["response_message"] = summary
+    thread_messages = state.get("thread_messages", [])
+    max_messages = state.get("max_messages", 25)
+
+    if thread_messages:
+        summary = summarize_thread_messages(thread_messages, max_messages)
+        state["llm_summary"] = summary
+        state["response_message"] = summary
+        return state
+
+    # No thread context supplied: summarize the channel via the Slack MCP server.
+    channel_id = state.get("channel_id")
+    if channel_id:
+        from services.slack_summarize_service import summarize_slack
+
+        result = summarize_slack(channel_id)
+        if result.get("error"):
+            state["response_message"] = result["error"]
         else:
-            state["response_message"] = (
-                "No messages to summarize. I need `channels:history` permission "
-                "to read channel messages. Ask your Slack admin to add it in "
-                "the app settings under OAuth & Permissions."
-            )
+            msg = result["summary"]
+            if result.get("warning"):
+                msg = f"{result['warning']}\n\n{msg}"
+            state["llm_summary"] = result["summary"]
+            state["response_message"] = msg
+        return state
+
+    state["response_message"] = (
+        "No messages to summarize. I need `channels:history` permission "
+        "to read channel messages. Ask your Slack admin to add it in "
+        "the app settings under OAuth & Permissions."
+    )
     return state
 
 
