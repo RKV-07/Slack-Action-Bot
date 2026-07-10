@@ -1,6 +1,9 @@
-import threading
+import concurrent.futures
 from graph.workflow import sab_graph
 from handlers.shared import fetch_thread_messages, build_initial_state
+
+# Limit concurrent background threads to prevent resource exhaustion
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
 
 def _execute_command_graph_async(state: dict, client, command: dict):
@@ -13,6 +16,14 @@ def _execute_command_graph_async(state: dict, client, command: dict):
         )
     except Exception as e:
         print(f"[Command Error] Failed background execution: {e}")
+        try:
+            client.chat_postMessage(
+                channel=command["channel_id"],
+                text="Sorry, I ran into an error processing that request.",
+                thread_ts=command.get("thread_ts"),
+            )
+        except Exception:
+            pass
 
 
 def handle_sab_command(command: dict, client) -> str:
@@ -40,9 +51,8 @@ def handle_sab_command(command: dict, client) -> str:
         thread_messages=thread_messages,
     )
 
-    # Spin off thread to prevent Slack timeout
-    thread = threading.Thread(target=_execute_command_graph_async, args=(state, client, command))
-    thread.start()
+    # Submit to thread pool with max workers limit
+    _executor.submit(_execute_command_graph_async, state, client, command)
 
     # Return an immediate acknowledgment message back to main.py
     return "Processing your request... :hourglass_flowing_sand:"

@@ -20,7 +20,8 @@ class ReminderData(BaseModel):
 class BotState(TypedDict):
     command_type: Literal[
         "context", "reminder", "github", "mention",
-        "latest_github", "greeting", "test_llm", "help", "chat"
+        "latest_github", "greeting", "test_llm", "help", "chat",
+        "learn", "codereview"
     ]
     action_context: Optional[ActionContext]
     reminder_data: Optional[ReminderData]
@@ -35,3 +36,12 @@ class BotState(TypedDict):
     llm_summary: Optional[str]
     thread_messages: list[dict]
     max_messages: int
+    # Learn command fields
+    learn_topic: str
+    learn_resources: list[dict]
+    learn_path: dict
+    # Code review fields
+    review_pr_data: dict
+    review_security: str
+    review_performance: str
+    review_best_practices: str

@@ -1,0 +1,217 @@
+"""
+Code Review Service - Multi-agent code review with 3 subagents.
+
+Fans out to Security, Performance, and Best Practices reviewers.
+Uses MCP GitHub (primary) or direct API (fallback) to fetch PR diffs.
+"""
+
+import json
+import re
+from typing import Optional
+import requests
+from services.llm_service import _chat_completion
+from config import GITHUB_TOKEN
+
+
+def parse_review_ref(raw_input: str) -> Optional[dict]:
+    """Extract repo and PR number from user input."""
+    match = re.search(r'([\w-]+/[\w-]+)?#(\d+)', raw_input)
+    if match:
+        repo = match.group(1)
+        pr_num = int(match.group(2))
+        return {"repo": repo, "pr_number": pr_num}
+
+    url_match = re.search(r'github\.com/([\w-]+/[\w-]+)/pull/(\d+)', raw_input)
+    if url_match:
+        return {"repo": url_match.group(1), "pr_number": int(url_match.group(2))}
+
+    return None
+
+
+def _github_get_pr(repo: str, pr_number: int) -> dict:
+    """Fetch PR via MCP or direct API."""
+    owner, repo_name = repo.split("/") if "/" in repo else ("", repo)
+
+    # Try MCP first
+    try:
+        from services.mcp_client import mcp_client
+        if "github" in mcp_client._sessions:
+            result = mcp_client.call_tool("github", "get_pull_request", {
+                "owner": owner, "repo": repo_name, "pull_number": pr_number
+            })
+            if result and not result.startswith("Error"):
+                pr_data = json.loads(result) if isinstance(result, str) else result
+                if isinstance(pr_data, dict) and pr_data.get("title"):
+                    return {
+                        "title": pr_data.get("title", ""),
+                        "body": pr_data.get("body", "")[:2000],
+                        "state": pr_data.get("state", ""),
+                        "diff_url": pr_data.get("diff_url", ""),
+                        "files": pr_data.get("files", []),
+                    }
+    except Exception as e:
+        print(f"[CodeReview] MCP fetch failed: {e}")
+
+    # Fallback: direct API (GET /pulls + GET /pulls/files for patch text)
+    if GITHUB_TOKEN:
+        try:
+            headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+            resp = requests.get(
+                f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}",
+                headers=headers,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                pr_data = resp.json()
+                files = pr_data.get("files", [])
+
+                # Also fetch files endpoint to get patch/diff text
+                files_resp = requests.get(
+                    f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files",
+                    headers=headers,
+                    timeout=10,
+                )
+                if files_resp.status_code == 200:
+                    files = files_resp.json()
+
+                return {
+                    "title": pr_data.get("title", ""),
+                    "body": pr_data.get("body", "")[:2000],
+                    "state": pr_data.get("state", ""),
+                    "diff_url": pr_data.get("diff_url", ""),
+                    "files": files,
+                }
+        except Exception as e:
+            print(f"[CodeReview] Direct API failed: {e}")
+
+    return {"title": "Unknown PR", "body": "", "state": "unknown", "files": []}
+
+
+def fetch_pr_diff(repo: str, pr_number: int) -> dict:
+    """Fetch PR details and diff."""
+    return _github_get_pr(repo, pr_number)
+
+
+def review_security(pr_data: dict) -> str:
+    """Security Reviewer subagent."""
+    files_text = "\n".join([
+        f"- {f.get('filename', 'unknown')}: +{f.get('additions', 0)}/-{f.get('deletions', 0)}"
+        + (f"\n```diff\n{f['patch'][:1500]}\n```" if f.get("patch") else "")
+        for f in pr_data.get("files", [])[:10]
+    ]) or "No file details available"
+
+    prompt = (
+        f"Review this PR for SECURITY issues:\n\n"
+        f"Title: {pr_data.get('title', 'Unknown')}\n"
+        f"Description: {pr_data.get('body', 'No description')[:500]}\n"
+        f"Files changed:\n{files_text}\n\n"
+        f"Check for:\n"
+        f"- SQL injection vulnerabilities\n"
+        f"- XSS (Cross-Site Scripting)\n"
+        f"- Hardcoded secrets/credentials\n"
+        f"- Insecure authentication/authorization\n"
+        f"- Path traversal risks\n"
+        f"- Insecure dependencies\n\n"
+        f"Provide:\n"
+        f"1. Security issues found (if any)\n"
+        f"2. Risk level (Low/Medium/High)\n"
+        f"3. Specific recommendations\n"
+        f"Keep it concise - focus on actionable items."
+    )
+
+    result = _chat_completion(prompt, max_tokens=400, system_msg=(
+        "You are a security code reviewer. Be specific about vulnerabilities. "
+        "Focus on real risks, not style issues."
+    ))
+
+    return result or "Security review completed - no major issues found."
+
+
+def review_performance(pr_data: dict) -> str:
+    """Performance Reviewer subagent."""
+    files_text = "\n".join([
+        f"- {f.get('filename', 'unknown')}: +{f.get('additions', 0)}/-{f.get('deletions', 0)}"
+        + (f"\n```diff\n{f['patch'][:1500]}\n```" if f.get("patch") else "")
+        for f in pr_data.get("files", [])[:10]
+    ]) or "No file details available"
+
+    prompt = (
+        f"Review this PR for PERFORMANCE issues:\n\n"
+        f"Title: {pr_data.get('title', 'Unknown')}\n"
+        f"Description: {pr_data.get('body', 'No description')[:500]}\n"
+        f"Files changed:\n{files_text}\n\n"
+        f"Check for:\n"
+        f"- N+1 query problems\n"
+        f"- Memory leaks or inefficient memory usage\n"
+        f"- Unnecessary API calls or network requests\n"
+        f"- Inefficient algorithms (O(n^2) where O(n) is possible)\n"
+        f"- Missing caching opportunities\n"
+        f"- Blocking operations in async code\n\n"
+        f"Provide:\n"
+        f"1. Performance issues found (if any)\n"
+        f"2. Impact level (Low/Medium/High)\n"
+        f"3. Optimization suggestions\n"
+        f"Keep it concise - focus on measurable improvements."
+    )
+
+    result = _chat_completion(prompt, max_tokens=400, system_msg=(
+        "You are a performance code reviewer. Be specific about bottlenecks. "
+        "Focus on real performance gains."
+    ))
+
+    return result or "Performance review completed - no major issues found."
+
+
+def review_best_practices(pr_data: dict) -> str:
+    """Best Practices Reviewer subagent."""
+    files_text = "\n".join([
+        f"- {f.get('filename', 'unknown')}: +{f.get('additions', 0)}/-{f.get('deletions', 0)}"
+        + (f"\n```diff\n{f['patch'][:1500]}\n```" if f.get("patch") else "")
+        for f in pr_data.get("files", [])[:10]
+    ]) or "No file details available"
+
+    prompt = (
+        f"Review this PR for BEST PRACTICES:\n\n"
+        f"Title: {pr_data.get('title', 'Unknown')}\n"
+        f"Description: {pr_data.get('body', 'No description')[:500]}\n"
+        f"Files changed:\n{files_text}\n\n"
+        f"Check for:\n"
+        f"- Code style consistency\n"
+        f"- Error handling patterns\n"
+        f"- Documentation gaps\n"
+        f"- Test coverage suggestions\n"
+        f"- Code duplication\n"
+        f"- Naming conventions\n"
+        f"- SOLID principles adherence\n\n"
+        f"Provide:\n"
+        f"1. Best practice violations (if any)\n"
+        f"2. Suggestions for improvement\n"
+        f"3. Positive aspects of the code\n"
+        f"Keep it constructive and balanced."
+    )
+
+    result = _chat_completion(prompt, max_tokens=400, system_msg=(
+        "You are a best practices code reviewer. Be constructive. "
+        "Balance criticism with recognition of good patterns."
+    ))
+
+    return result or "Best practices review completed - code looks good."
+
+
+def merge_reviews(security: str, performance: str, best_practices: str, pr_data: dict) -> str:
+    """Merge all three review outputs into a formatted response."""
+    pr_title = pr_data.get("title", "Unknown PR")
+
+    sections = [
+        f"**Code Review: {pr_title}**\n",
+        f"{'='*40}\n",
+        f"**Security Review**\n{security}\n",
+        f"{'='*40}\n",
+        f"**Performance Review**\n{performance}\n",
+        f"{'='*40}\n",
+        f"**Best Practices Review**\n{best_practices}\n",
+        f"{'='*40}\n",
+        f"_Review generated by 3 AI subagents_",
+    ]
+
+    return "\n".join(sections)

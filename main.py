@@ -1,8 +1,9 @@
 import re
 import atexit
+import threading
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from config import SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET
+from config import SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET, GITHUB_TOKEN, MCP_GITHUB_ENABLED, MCP_FETCH_ENABLED
 from handlers.commands import handle_sab_command
 from handlers.events import handle_message_event, handle_app_mention
 from services.reminder_service import shutdown_scheduler
@@ -14,6 +15,31 @@ app = App(
 )
 
 GITHUB_REF_PATTERN = re.compile(r"\b[\w-]+/[\w-]+#\d+\b")
+
+
+def init_mcp_servers():
+    """Initialize MCP server connections on startup."""
+    try:
+        from services.mcp_client import setup_mcp_servers
+        setup_mcp_servers(github_token=GITHUB_TOKEN)
+        print("[MCP] Server initialization complete")
+    except Exception as e:
+        print(f"[MCP] Failed to initialize servers: {e}")
+        print("[MCP] Learn and CodeReview commands may have limited functionality")
+
+
+def _cleanup_mcp():
+    """Shutdown MCP client on exit."""
+    try:
+        from services.mcp_client import mcp_client
+        for name in list(mcp_client._sessions.keys()):
+            try:
+                mcp_client.disconnect(name)
+            except Exception:
+                pass
+        print("[MCP] Cleanup complete")
+    except Exception:
+        pass
 
 
 @app.command("/sab")
@@ -35,16 +61,21 @@ def cmd_sab(ack, command, client, logger):
 
 
 @app.event("message")
+@with_processing_reaction
 def on_message(event, say, client, logger):
     if event.get("bot_id"):
         return
     text = event.get("text", "")
     if not GITHUB_REF_PATTERN.search(text):
         return
+    # Skip if bot is mentioned (app_mention handler will process it)
+    if re.search(r'<@[A-Za-z0-9]+>', text):
+        return
     try:
         handle_message_event(event, client, say)
     except Exception as e:
         logger.error(f"Error in message handler: {e}")
+        say("Something went wrong while fetching GitHub data.")
 
 
 @app.event("app_mention")
@@ -59,6 +90,11 @@ def on_mention(event, say, client, logger):
 
 def start():
     atexit.register(shutdown_scheduler)
+    atexit.register(_cleanup_mcp)
+    # Initialize MCP servers in background thread so bot boots immediately
+    if MCP_GITHUB_ENABLED or MCP_FETCH_ENABLED:
+        t = threading.Thread(target=init_mcp_servers, daemon=True)
+        t.start()
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     print("Starting Slack Advanced Actions Bot...")
     handler.start()

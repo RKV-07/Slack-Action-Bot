@@ -1,6 +1,16 @@
 import requests
 import json
-from config import LLAMA_BASE_URL
+import logging
+from config import LLAMA_BASE_URL, LLAMA_PARALLEL
+
+logger = logging.getLogger(__name__)
+
+if not LLAMA_PARALLEL:
+    logger.warning(
+        "LLAMA_PARALLEL is not set. llama-server may default to 1 slot, "
+        "causing requests to queue. Set LLAMA_PARALLEL=4 (or your slot count) "
+        "in .env to allow concurrent LLM calls."
+    )
 
 PERSONA = (
     "You are Slack Actions Bot, a friendly Slack assistant. "
@@ -73,7 +83,7 @@ def summarize_thread_messages(messages: list[dict], max_messages: int = 10) -> s
     if not messages:
         return "No messages to summarize."
 
-    limited = messages[:max_messages]
+    limited = messages[-max_messages:]
     thread_text = "\n".join([
         f"User {m.get('user', 'unknown')}: {m.get('text', '')}"
         for m in limited

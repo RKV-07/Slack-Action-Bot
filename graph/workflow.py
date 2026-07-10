@@ -15,6 +15,16 @@ from .nodes import (
     build_greeting_response,
     build_chat_response,
     test_llm_connection,
+    learn_research,
+    learn_structure,
+    learn_resources,
+    learn_response,
+    codereview_fetch,
+    codereview_security,
+    codereview_performance,
+    codereview_best_practices,
+    codereview_merge,
+    codereview_response,
 )
 
 
@@ -29,8 +39,17 @@ def route_after_classification(state: BotState) -> str:
         "greeting": "greeting_response",
         "chat": "chat_response",
         "test_llm": "test_llm",
+        "learn": "learn_research",
+        "codereview": "codereview_fetch",
     }
     return routes.get(cmd, "help_response")
+
+
+def route_codereview(state: BotState) -> list[str]:
+    """If fetch already set an error response, skip the subagents."""
+    if state.get("response_message"):
+        return ["codereview_response"]
+    return ["codereview_security", "codereview_performance", "codereview_best_practices"]
 
 
 def build_graph() -> CompiledStateGraph:
@@ -50,6 +69,20 @@ def build_graph() -> CompiledStateGraph:
     g.add_node("chat_response", build_chat_response)
     g.add_node("test_llm", test_llm_connection)
 
+    # Learn nodes
+    g.add_node("learn_research", learn_research)
+    g.add_node("learn_structure", learn_structure)
+    g.add_node("learn_resources", learn_resources)
+    g.add_node("learn_response", learn_response)
+
+    # Code review nodes
+    g.add_node("codereview_fetch", codereview_fetch)
+    g.add_node("codereview_security", codereview_security)
+    g.add_node("codereview_performance", codereview_performance)
+    g.add_node("codereview_best_practices", codereview_best_practices)
+    g.add_node("codereview_merge", codereview_merge)
+    g.add_node("codereview_response", codereview_response)
+
     g.set_entry_point("classify")
 
     g.add_conditional_edges("classify", route_after_classification, {
@@ -61,6 +94,8 @@ def build_graph() -> CompiledStateGraph:
         "greeting_response": "greeting_response",
         "chat_response": "chat_response",
         "test_llm": "test_llm",
+        "learn_research": "learn_research",
+        "codereview_fetch": "codereview_fetch",
     })
 
     g.add_edge("parse_reminder", "schedule_reminder")
@@ -75,6 +110,20 @@ def build_graph() -> CompiledStateGraph:
     g.add_edge("greeting_response", END)
     g.add_edge("chat_response", END)
     g.add_edge("test_llm", END)
+
+    # Learn flow: research → structure → resources → response
+    g.add_edge("learn_research", "learn_structure")
+    g.add_edge("learn_structure", "learn_resources")
+    g.add_edge("learn_resources", "learn_response")
+    g.add_edge("learn_response", END)
+
+    # Code review flow: fetch → [security, performance, best_practices] → merge → response
+    g.add_conditional_edges("codereview_fetch", route_codereview)
+    g.add_edge("codereview_security", "codereview_merge")
+    g.add_edge("codereview_performance", "codereview_merge")
+    g.add_edge("codereview_best_practices", "codereview_merge")
+    g.add_edge("codereview_merge", "codereview_response")
+    g.add_edge("codereview_response", END)
 
     return g.compile()
 

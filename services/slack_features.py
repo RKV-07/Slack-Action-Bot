@@ -120,7 +120,7 @@ class SlackBotFeatures:
 
 def with_processing_reaction(func):
     @wraps(func)
-    def wrapper(event, client, say, *args, **kwargs):
+    def wrapper(event, say, client, *args, **kwargs):
         channel = event.get("channel", "")
         ts = event.get("ts", "")
 
@@ -128,7 +128,7 @@ def with_processing_reaction(func):
         features.add_reaction(channel, ts)
 
         try:
-            result = func(event, client, say, *args, **kwargs)
+            result = func(event, say, client, *args, **kwargs)
             return result
         finally:
             features.remove_reaction(channel, ts)

@@ -8,9 +8,13 @@ SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-DEFAULT_GITHUB_REPO = os.environ.get("DEFAULT_GITHUB_REPO", "owner/repo")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 LLAMA_BASE_URL = os.environ.get("LLAMA_BASE_URL", "http://localhost:8080")
+LLAMA_PARALLEL = os.environ.get("LLAMA_PARALLEL")
+
+# MCP Server Configuration (MCP primary, direct API as fallback)
+MCP_GITHUB_ENABLED = os.environ.get("MCP_GITHUB_ENABLED", "true").lower() == "true"
+MCP_FETCH_ENABLED = os.environ.get("MCP_FETCH_ENABLED", "true").lower() == "true"
 
 _required = {
     "SLACK_BOT_TOKEN": SLACK_BOT_TOKEN,
