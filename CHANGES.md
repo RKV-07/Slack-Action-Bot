@@ -36,7 +36,7 @@ TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 ```
 User mention
        ▼
-handlers/events.py (strips mention tag, dedup guard)
+handlers/events.py (strips mention tag, dedup guard on event_ts)
        ▼
 graph/workflow.py (LangGraph StateGraph)
        ▼
@@ -46,6 +46,7 @@ graph/nodes.py (classify_intent — 12 routes)
 │ greeting? → build_greeting_response │
 │ help?     → build_help_response     │
 │ test_llm? → test_llm_connection     │
+│           (LLM + 3 MCP health check)│
 │ reminder? → parse_reminder          │
 │ reminders → list / cancel           │
 │ github?   → extract_github          │
@@ -66,8 +67,8 @@ Response to Slack
 
 ## How to Test
 
-### LLM Connection
-`/sab test`
+### System Diagnostics
+`/sab test` — checks LLM + all 3 MCP sessions
 
 ### Greetings
 `hi`, `hey`, `hello`, `what can you do`

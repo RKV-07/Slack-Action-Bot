@@ -2,7 +2,7 @@ import concurrent.futures
 import re
 from config import SLACK_SUMMARY_MAX_MESSAGES
 from graph.workflow import sab_graph
-from handlers.shared import fetch_thread_messages, fetch_channel_messages, build_initial_state
+from handlers.shared import fetch_thread_messages, fetch_channel_messages, build_initial_state, md_to_slack_mrkdwn
 
 # Limit concurrent background threads to prevent resource exhaustion
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
@@ -13,7 +13,7 @@ def _execute_command_graph_async(state: dict, client, command: dict):
         result = sab_graph.invoke(state)
         client.chat_postMessage(
             channel=command["channel_id"],
-            text=result.get("response_message", "Something went wrong."),
+            text=md_to_slack_mrkdwn(result.get("response_message", "Something went wrong.")),
             thread_ts=command.get("thread_ts"),
         )
     except Exception as e:

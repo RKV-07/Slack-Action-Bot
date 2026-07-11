@@ -79,6 +79,10 @@ def cmd_sab(ack, command, client, logger):
 def on_message(event, say, client, logger):
     if event.get("bot_id"):
         return
+    # Dedup: Socket Mode can redeliver events
+    event_ts = event.get("ts", "")
+    if event_ts and _already_processed(f"msg_{event_ts}"):
+        return
     text = event.get("text", "")
     if not GITHUB_REF_PATTERN.search(text):
         return
@@ -95,6 +99,10 @@ def on_message(event, say, client, logger):
 @app.event("app_mention")
 @with_processing_reaction
 def on_mention(event, say, client, logger, context):
+    # Dedup: Socket Mode can redeliver events
+    event_ts = event.get("ts", "")
+    if event_ts and _already_processed(f"mention_{event_ts}"):
+        return
     try:
         handle_app_mention(event, client, say, context=context)
     except Exception as e:

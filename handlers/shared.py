@@ -1,7 +1,34 @@
+import re
+import time
 from graph.state import ActionContext
+from slack_sdk.errors import SlackApiError
 
 _bot_user_id: str = None
 _bot_user_id_fetched: bool = False
+
+
+def _call_with_backoff(fn, max_retries=1):
+    """Call a Slack API function with retry on rate-limit."""
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except SlackApiError as e:
+            if e.response.get("error") == "ratelimited" and attempt < max_retries:
+                wait = int(e.response.headers.get("Retry-After", 5))
+                print(f"[Shared] Rate limited, waiting {wait}s")
+                time.sleep(wait)
+                continue
+            raise
+
+
+def md_to_slack_mrkdwn(text: str) -> str:
+    """Convert common Markdown to Slack mrkdwn before posting."""
+    if not text:
+        return text
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)      # **bold** -> *bold*
+    text = re.sub(r'__(.+?)__', r'*\1*', text)           # __bold__ -> *bold*
+    text = re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'<\2|\1>', text)  # [t](url) -> <url|t>
+    return text
 
 
 def _get_bot_user_id(client) -> str:
@@ -37,7 +64,7 @@ def is_real_message(msg: dict, bot_user_id: str = None) -> bool:
 def fetch_thread_messages(client, channel_id: str, ts: str) -> tuple[str, list[dict]]:
     """Fetch messages from a thread (conversations_replies)."""
     try:
-        resp = client.conversations_replies(channel=channel_id, ts=ts, limit=100)
+        resp = _call_with_backoff(lambda: client.conversations_replies(channel=channel_id, ts=ts, limit=100))
 
         # Check for API errors
         if not resp.get("ok"):
@@ -62,6 +89,9 @@ def fetch_thread_messages(client, channel_id: str, ts: str) -> tuple[str, list[d
             })
 
         return original, thread
+    except SlackApiError:
+        print("[Shared] Rate limited on conversations_replies — try again in a minute")
+        return "", []
     except Exception as e:
         print(f"[Shared] Error fetching thread: {e}")
         return "", []
@@ -71,7 +101,7 @@ def fetch_channel_messages(client, channel_id: str, count: int = 25) -> list[dic
     """Fetch the last N human messages from a channel (not thread)."""
     try:
         # Over-fetch heavily — bot messages and short msgs get filtered out
-        resp = client.conversations_history(channel=channel_id, limit=count + 40)
+        resp = _call_with_backoff(lambda: client.conversations_history(channel=channel_id, limit=count + 40))
 
         # Check for API errors
         if not resp.get("ok"):
@@ -106,6 +136,9 @@ def fetch_channel_messages(client, channel_id: str, count: int = 25) -> list[dic
 
         result.reverse()  # normalize to oldest-first, matching fetch_thread_messages
         return result
+    except SlackApiError:
+        print("[Shared] Rate limited on conversations_history — try again in a minute")
+        return []
     except Exception as e:
         print(f"[Shared] Error fetching channel messages: {e}")
         return []

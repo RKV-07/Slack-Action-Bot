@@ -6,7 +6,7 @@ A smart Slack bot powered by **LangGraph** and **local Qwen3-8B** for agentic wo
 
 | Feature | Command | Description |
 |---|---|---|
-| Summarize | `/sab summarize` or mention | Summarizes last 25 messages using local LLM |
+| Summarize | `/sab summarize` or mention | Summarizes recent messages using local LLM |
 | Reminders | `/sab -r "task" @30m` | Set timed reminders (persisted in SQLite) |
 | Natural Language Reminders | `/sab remind me to...` | dateparser handles "tomorrow at 3pm" |
 | List Reminders | `/sab reminders` | Show all pending reminders with IDs |
@@ -15,11 +15,13 @@ A smart Slack bot powered by **LangGraph** and **local Qwen3-8B** for agentic wo
 | Latest Issues | `/sab latest issues` | Newest open issues across all repos |
 | Latest PRs | `/sab latest prs` | Newest open PRs across all repos |
 | Code Review | `/sab codereview owner/repo#123` | 3-subagent review (Security + Performance + Best Practices) |
+| PR Risk Score | (auto in code review) | 🔴 High / 🟡 Medium / 🟢 Low from Semgrep + LLM |
 | Semgrep Security | (auto in code review) | Real static analysis grounding |
 | Learning Paths | `/sab learn <topic>` | 3-agent research → structure → resources |
 | Web Search | (auto in /learn) | Tavily API for real URLs |
+| MCP Source Footer | (auto in review/learn) | Visible "via GitHub MCP" or fallback note |
 | Help | `/sab` or "what can you do" | Static command list |
-| LLM Test | `/sab test` | Verifies llama-server connection |
+| System Diagnostics | `/sab test` | Checks LLM + all 3 MCP sessions |
 | Typo Tolerance | "coderview", "review", "pr" | difflib fuzzy matching |
 
 ## Architecture
@@ -37,6 +39,9 @@ Built with **LangGraph StateGraph** for deterministic, debuggable agentic workfl
 │  ├── /sab command ──► cmd_sab() ──► handle_sab_command()           │
 │  ├── app_mention ──► on_mention() ──► handle_app_mention()         │
 │  └── message ──► on_message() ──► handle_message_event()           │
+│                                                                      │
+│  [trigger_id dedup on /sab] [event_ts dedup on mention/message]    │
+│  [processing reaction decorator] [MCP init in background thread]   │
 └────────────────────────────┬────────────────────────────────────────┘
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -70,7 +75,7 @@ Built with **LangGraph StateGraph** for deterministic, debuggable agentic workfl
 - **Local Qwen3-8B** — LLM via llama-server (no cloud API)
 - **APScheduler** — SQLite-persisted reminder scheduling
 - **GitHub API** — Issue/PR lookup with TTL cache
-- **MCP** — Model Context Protocol for extensible tool access
+- **MCP** — Model Context Protocol for extensible tool access (GitHub, Fetch, custom Slack server)
 - **Semgrep** — Real static analysis for security reviews
 - **Tavily** — Web search for verified learning resources
 - **dateparser** — Natural language time parsing
@@ -81,7 +86,7 @@ Built with **LangGraph StateGraph** for deterministic, debuggable agentic workfl
 
 ```
 Slack-Action-Bot/
-├── main.py                      # Bolt app, MCP init, dedup guard
+├── main.py                      # Bolt app, MCP init, dedup guards (trigger_id + event_ts)
 ├── config.py                    # Env vars (tokens, endpoints)
 ├── graph/
 │   ├── state.py                 # BotState TypedDict, ReminderData
@@ -97,7 +102,7 @@ Slack-Action-Bot/
 │   ├── codereview_service.py    # 3-subagent review, Semgrep
 │   ├── learn_service.py         # 3-agent learning path, Tavily search
 │   ├── reminder_service.py      # SQLite-backed APScheduler
-│   ├── mcp_client.py            # MCP AsyncExitStack, background loop
+│  ├── mcp_client.py            # MCP AsyncExitStack, background loop, _evict_session()
 │   ├── mcp_slack_server.py      # Custom Slack MCP server (stdio)
 │   ├── slack_summarize_service.py # MCP-first channel summary
 │   └── slack_features.py        # Processing reaction decorator
@@ -111,7 +116,7 @@ Slack-Action-Bot/
 
 1. Start llama-server with Qwen3-8B:
    ```bash
-   llama-server -m models/qwen3-8b-q4_k_m.gguf --port 8080 --parallel 4
+   llama-server -m models/qwen3-8b-q4_k_m.gguf --port 8080 --parallel 4 -c 16384
    ```
 
 2. Copy `.env.example` to `.env` and fill in:
@@ -147,8 +152,8 @@ Slack-Action-Bot/
 | `/sab reminder cancel <id>` | Cancel a reminder |
 | `/sab latest issues` | Newest open issues across all repos |
 | `/sab latest prs` | Newest open PRs across all repos |
-| `/sab codereview owner/repo#123` | 3-perspective code review |
+| `/sab codereview owner/repo#123` | 3-perspective code review with risk score |
 | `/sab learn <topic>` | Structured learning path |
-| `/sab test` | Test LLM connection |
+| `/sab test` | Diagnostics: LLM + MCP health check |
 | `owner/repo#123` | Auto-fetch issue/PR details |
 | Paste GitHub URL | Auto-fetch issue/PR details |

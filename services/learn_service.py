@@ -12,6 +12,9 @@ from services.llm_service import _chat_completion
 from config import GITHUB_TOKEN, TAVILY_API_KEY
 
 
+_last_search_via_mcp = False
+
+
 def _tavily_search(query: str, count: int = 5) -> list:
     """Search the web via Tavily API for real, verified results."""
     if not TAVILY_API_KEY:
@@ -34,6 +37,7 @@ def _tavily_search(query: str, count: int = 5) -> list:
 
 def _github_search_repos(query: str, count: int = 3) -> list:
     """Search GitHub repos via MCP or direct API."""
+    global _last_search_via_mcp
     # Try MCP first
     try:
         from services.mcp_client import mcp_client
@@ -42,6 +46,7 @@ def _github_search_repos(query: str, count: int = 3) -> list:
                 "query": query, "sort": "stars", "per_page": count
             })
             if result and not result.startswith("Error"):
+                _last_search_via_mcp = True
                 data = json.loads(result) if isinstance(result, str) else result
                 if isinstance(data, dict) and "items" in data:
                     return [
@@ -58,6 +63,7 @@ def _github_search_repos(query: str, count: int = 3) -> list:
         print(f"[Learn] MCP GitHub search failed: {e}")
 
     # Fallback: direct API
+    _last_search_via_mcp = False
     if GITHUB_TOKEN:
         try:
             headers = {"Authorization": f"token {GITHUB_TOKEN}"}
@@ -200,7 +206,8 @@ def curate_resources(topic: str, resources: list, path: dict) -> str:
     ))
 
     if result:
-        return result
+        source_note = "_via GitHub MCP_" if _last_search_via_mcp else "_via GitHub REST API (fallback)_"
+        return f"{result}\n\n_{source_note}_"
 
     return (
         f"**Learning Path: {topic}**\n\n"

@@ -3,7 +3,7 @@ import re
 from config import SLACK_SUMMARY_MAX_MESSAGES
 from graph.workflow import sab_graph
 from services.github_service import detect_github_refs, fetch_github_issue
-from handlers.shared import fetch_thread_messages, fetch_channel_messages, build_initial_state
+from handlers.shared import fetch_thread_messages, fetch_channel_messages, build_initial_state, md_to_slack_mrkdwn
 
 
 def _execute_message_github_async(refs: list, say):
@@ -32,7 +32,7 @@ def _execute_message_github_async(refs: list, say):
                 print(f"[GitHub] Could not fetch {repo}#{num}")
 
         if responses:
-            say(text="\n\n".join(responses))
+            say(text=md_to_slack_mrkdwn("\n\n".join(responses)))
         else:
             say(text="Could not fetch GitHub issue/PR details.")
     except Exception as e:
@@ -59,7 +59,7 @@ def _execute_graph_async(state: dict, say):
         print(f"[Graph] Running with command_type={state.get('command_type')}, "
               f"thread_messages={len(state.get('thread_messages', []))} msgs")
         result = sab_graph.invoke(state)
-        response = result.get("response_message", "Hey! How can I help you?")
+        response = md_to_slack_mrkdwn(result.get("response_message", "Hey! How can I help you?"))
         print(f"[Graph] Response: {response[:100]}...")
         say(text=response)
     except Exception as e:

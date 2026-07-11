@@ -447,11 +447,28 @@ def build_chat_response(state: BotState) -> BotState:
 
 def test_llm_connection(state: BotState) -> BotState:
     from services.llm_service import _chat_completion
-    result = _chat_completion("Say 'LLM is working!' in exactly 5 words or less", max_tokens=20)
-    if result:
-        state["response_message"] = f"✓ LLM is connected!\nResponse: {result}"
+    from services.mcp_client import mcp_client
+
+    result = _chat_completion("Say OK", max_tokens=5)
+    llm_ok = bool(result)
+    mcp_status = {name: mcp_client.health_check(name) for name in ("github", "fetch", "slack")}
+
+    lines = [f"{'✓' if llm_ok else '✗'} Local LLM (Qwen3-8B)"]
+    lines += [f"{'✓' if ok else '✗'} MCP: {name}" for name, ok in mcp_status.items()]
+
+    all_ok = llm_ok and all(mcp_status.values())
+    if all_ok:
+        lines.insert(0, "All systems operational\n")
     else:
-        state["response_message"] = "✗ LLM connection failed. Check if llama-server is running."
+        failed = [name for name, ok in mcp_status.items() if not ok]
+        hint = []
+        if not llm_ok:
+            hint.append("llama-server running on port 8080?")
+        if failed:
+            hint.append(f"MCP ({', '.join(failed)}) connected?")
+        lines.append(f"\nHint: Check {' & '.join(hint)}")
+
+    state["response_message"] = "\n".join(lines)
     return state
 
 

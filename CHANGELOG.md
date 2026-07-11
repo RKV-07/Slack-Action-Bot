@@ -14,8 +14,10 @@
 #### Code Review (`/sab codereview`)
 - 3-subagent fan-out: Security, Performance, Best Practices
 - Semgrep grounding for real static analysis in security reviews
+- PR risk score (🔴/🟡/🟢) from Semgrep findings + LLM analysis
 - `parse_review_ref` handles `owner/repo#N`, PR URLs, and bare repos
 - Actionable error for bare repo URLs without PR number
+- MCP source-transparency footer on every review
 - Typo-tolerant via difflib (`coderview`, `review`, `pr`)
 
 #### Learning Paths (`/sab learn`)
@@ -30,6 +32,10 @@
 - Cancel reminders: `/sab reminder cancel <id>`
 - Natural language via dateparser (`tomorrow at 3pm`)
 - Pre-normalization for "X mins later" phrasing
+
+#### System Diagnostics (`/sab test`)
+- Checks LLM connection + all 3 MCP sessions (GitHub, Fetch, Slack)
+- Hint text on failure to guide debugging
 
 #### MCP Integration
 - GitHub MCP server (`@modelcontextprotocol/server-github`)
@@ -58,6 +64,7 @@
 - `body: null` crash → `(x.get("body") or default)[:N]` across 10 instances
 - Retry guard used wrong API → `context.get("retry_num")` instead of `event.get("headers")`
 - `fetch_channel_messages` returned newest-first → added `.reverse()`
+- `on_message`/`app_mention` handlers missing `context` arg → added for retry guard
 
 #### Serious
 - "what can you do" misrouted to greeting → separate `HELP_PHRASES` check
@@ -72,6 +79,9 @@
 - Channel fetch hardcoded `count=6` → now uses `SLACK_SUMMARY_MAX_MESSAGES`
 - Empty summarize message now explains why (bot replies, not human conversation)
 - Slack MCP subprocess received full env → scoped to `SLACK_BOT_TOKEN` only
+- `on_message`/`app_mention` handlers missing `event_ts` dedup → keyed on `event_ts`
+- Bot sent broken Markdown to Slack (`**bold**`, `[text](url)`) → `md_to_slack_mrkdwn()` conversion
+- `conversations_history`/`conversations_replies` had no rate-limit retry → `_call_with_backoff()`
 
 #### Minor
 - BotState `command_type` Literal missing `reminder_list`/`reminder_cancel`

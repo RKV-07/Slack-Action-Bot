@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local Qwen3-8B** for LLM inference, and **MCP** for extensible tool access.
+A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local Qwen3-8B** for LLM inference, and **MCP** for extensible tool access (GitHub, Fetch, custom Slack server).
 
 ## System Architecture
 
@@ -18,9 +18,10 @@ A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local 
 │  ├── /sab command ──► cmd_sab() ──► handle_sab_command()           │
 │  ├── app_mention ──► on_mention() ──► handle_app_mention()         │
 │  ├── message ──► on_message() ──► handle_message_event()           │
-│  ├── [trigger_id dedup guard]                                       │
-│  ├── [processing reaction decorator]                                │
-│  └── [MCP init in background daemon thread]                         │
+│  ├── [trigger_id dedup guard on /sab]                                  │
+│  ├── [event_ts dedup guard on mention/message]                         │
+│  ├── [processing reaction decorator]                                   │
+│  └── [MCP init in background daemon thread]                            │
 └────────────────────────────┬────────────────────────────────────────┘
                              │
                              ▼
@@ -107,9 +108,14 @@ A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local 
 | SQLite jobstore | Reminders survive bot restarts |
 | `cachetools.TTLCache` | 2-min cache prevents redundant GitHub API calls |
 | Semgrep in security reviewer | Real static analysis grounded in actual code findings |
+| PR risk score | One-line risk indicator (🔴/🟡/🟢) from Semgrep + LLM |
 | Tavily in learn service | Real URLs instead of LLM-invented links |
-| `trigger_id` dedup | Prevents Socket Mode redelivery duplicates |
-| `is_real_message()` unified filter | Single source of truth across 3 fetch paths |
+| MCP source-transparency footer | Visible proof of MCP usage in every review/resource output |
+| `_call_with_backoff()` | Rate-limit resilience for Slack API calls |
+| `md_to_slack_mrkdwn()` | Fixes broken Markdown before posting to Slack |
+| `trigger_id` dedup on `/sab` | Prevents Socket Mode redelivery duplicates |
+| `event_ts` dedup on mention/message | Prevents duplicate processing on redelivered events |
+| `is_real_message()` unified filter | Single source of truth across all 3 fetch paths |
 | `ThreadPoolExecutor(5)` | Bounded concurrent graph executions |
 
 ## BotState TypedDict
@@ -184,7 +190,7 @@ All MCP servers initialize in a background daemon thread at startup. The bot boo
 | `requests` | HTTP calls to llama-server and GitHub API |
 | `apscheduler[sqlalchemy]` | SQLite-persisted reminder scheduling |
 | `pydantic` | Type-safe state models |
-| `mcp` | MCP Python SDK client |
+| `mcp` | MCP Python SDK client (GitHub, Fetch, custom Slack) |
 | `anyio` | Async runtime for MCP |
 | `cachetools` | TTL cache for GitHub repos |
 | `dateparser` | Natural language time parsing |
