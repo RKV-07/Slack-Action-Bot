@@ -1,326 +1,191 @@
-# Slack Action Bot - MCP Integration & New Commands Design
+# Slack Action Bot — Architecture & Design
 
 ## Overview
 
-Add two new commands (`/learn` and `/codereview`) with MCP (Model Context Protocol) server integration for extensible tool access.
+A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local Qwen3-8B** for LLM inference, and **MCP** for extensible tool access.
 
-## Current Architecture
-
-```
-Slack → main.py → handlers/commands.py → graph/workflow.py → nodes.py → services/
-                                    ↓
-                              sab_graph.invoke()
-```
-
-## MCP Integration Approach
-
-### Why MCP?
-
-- **Standardized**: Any MCP server works with any MCP client
-- **Extensible**: Add new tools without code changes
-- **FOSS**: Many open-source MCP servers available (GitHub, filesystem, web search, etc.)
-
-### Integration Strategy
-
-Use the **MCP Python SDK** (`mcp`) to connect to local MCP servers as tool providers in LangGraph nodes.
+## System Architecture
 
 ```
-LangGraph Node → MCP Client → MCP Server → External API
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Slack Workspace                              │
+│  User sends message or /sab command                                 │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │ Socket Mode (WebSocket)
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  main.py (Bolt App)                                                 │
+│  ├── /sab command ──► cmd_sab() ──► handle_sab_command()           │
+│  ├── app_mention ──► on_mention() ──► handle_app_mention()         │
+│  ├── message ──► on_message() ──► handle_message_event()           │
+│  ├── [trigger_id dedup guard]                                       │
+│  ├── [processing reaction decorator]                                │
+│  └── [MCP init in background daemon thread]                         │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  handlers/shared.py                                                 │
+│  ├── is_real_message() ── filters bot msgs, subtypes, empty        │
+│  ├── fetch_thread_messages() ── Slack API (conversations_replies)   │
+│  ├── fetch_channel_messages() ── conversations_history + .reverse() │
+│  ├── build_initial_state() ── constructs BotState TypedDict        │
+│  └── _get_bot_user_id() ── cached after first call                 │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  graph/workflow.py (LangGraph StateGraph)                           │
+│                                                                      │
+│  ┌──────────┐                                                       │
+│  │ classify │ ◄── entry_point (12 conditional routes)               │
+│  └────┬─────┘                                                       │
+│       ├─────────────────────────────────────────────────────────┐   │
+│       │         │          │          │          │               │   │
+│       ▼         ▼          ▼          ▼          ▼               │   │
+│  ┌─────────┐┌────────┐┌─────────┐┌────────┐┌─────────┐         │   │
+│  │reminder ││github  ││context  ││help    ││chat     │         │   │
+│  │parse    ││extract ││summarize││static  ││LLM      │         │   │
+│  │schedule ││fetch   ││channel  │└────────┘└─────────┘         │   │
+│  │list     ││response││response │                               │   │
+│  │cancel   │└────────┘└─────────┘                               │   │
+│  └─────────┘                                                     │   │
+│       │     ┌──────────────────────────────┐                     │   │
+│       │     │ learn_research                │                     │   │
+│       │     │ learn_structure ──► response  │                     │   │
+│       │     │ learn_resources               │                     │   │
+│       │     └──────────────────────────────┘                     │   │
+│       │     ┌──────────────────────────────┐                     │   │
+│       │     │ codereview_fetch              │                     │   │
+│       │     │ ┌──────┬──────┬──────────┐   │                     │   │
+│       │     │ │secure│perform│best_prac │   │──► merge ──► resp  │   │
+│       │     │ └──────┴──────┴──────────┘   │   (fan-out)        │   │
+│       │     └──────────────────────────────┘                     │   │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
+│ services/        │ │ services/    │ │ services/        │
+│ llm_service.py   │ │ github_svc   │ │ mcp_client.py    │
+│                  │ │              │ │                  │
+│ _chat_completion │ │ fetch_*()    │ │ AsyncExitStack   │
+│ summarize_msgs   │ │ rate_limit   │ │ background loop  │
+│ PERSONA          │ │ TTL cache    │ │ call_tool()      │
+│ /no_think prefix │ │ _headers()   │ │ _evict_session() │
+└────────┬─────────┘ └──────┬───────┘ └────────┬─────────┘
+         ▼                  ▼                   ▼
+┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
+│ llama-server     │ │ GitHub API   │ │ MCP Servers      │
+│ Qwen3-8B         │ │ REST         │ │ ├── @mcp/github  │
+│ localhost:8080   │ │              │ │ ├── mcp-fetch    │
+│ --parallel 4     │ │              │ │ └── mcp-slack    │
+└──────────────────┘ └──────────────┘ └──────────────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
+│ codereview_svc   │ │ learn_svc    │ │ reminder_svc     │
+│                  │ │              │ │                  │
+│ parse_review_ref │ │ research()   │ │ schedule_remind  │
+│ _run_semgrep()   │ │ structure()  │ │ list_reminders   │
+│ 3 reviewers      │ │ curate()     │ │ cancel_reminder  │
+│ merge_reviews    │ │ _tavily()    │ │ SQLite jobstore  │
+│ fan-out pattern  │ │ GitHub+Web   │ │ reminders.db     │
+└──────────────────┘ └──────────────┘ └──────────────────┘
 ```
 
-### Available FOSS MCP Servers
+## Key Design Decisions
 
-| Server | Purpose | Use Case |
-|--------|---------|----------|
-| `@modelcontextprotocol/server-github` | GitHub API | /codereview, PR analysis |
-| `@modelcontextprotocol/server-fetch` | Web fetching | /learn research |
-| `@modelcontextprotocol/server-filesystem` | File access | Local code review |
-| `@modelcontextprotocol/server-memory` | Knowledge graph | Learning context |
+| Decision | Why |
+|---|---|
+| LangGraph StateGraph | Structured routing, fan-out for parallel reviewers |
+| Local Qwen3-8B | Zero API cost, fast inference, no rate limits |
+| `/no_think` prefix | Qwen3 returns reasoning in `reasoning_content` field; prefix bypasses |
+| MCP primary, direct API fallback | Extensible tool access, graceful degradation |
+| `difflib` fuzzy matching | Typo tolerance without new dependencies |
+| SQLite jobstore | Reminders survive bot restarts |
+| `cachetools.TTLCache` | 2-min cache prevents redundant GitHub API calls |
+| Semgrep in security reviewer | Real static analysis grounded in actual code findings |
+| Tavily in learn service | Real URLs instead of LLM-invented links |
+| `trigger_id` dedup | Prevents Socket Mode redelivery duplicates |
+| `is_real_message()` unified filter | Single source of truth across 3 fetch paths |
+| `ThreadPoolExecutor(5)` | Bounded concurrent graph executions |
 
-## New Commands
+## BotState TypedDict
 
-### 1. `/learn <topic>`
-
-**Purpose**: Help users learn anything by creating a personalized learning path.
-
-**Flow**:
-```
-/learn python async programming
-    ↓
-┌─────────────────────────────────────┐
-│ 1. Research Agent                   │
-│    - Fetch web resources via MCP    │
-│    - Search documentation           │
-│    - Find tutorials & examples      │
-└─────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────┐
-│ 2. Structure Agent                  │
-│    - Organize by skill level        │
-│    - Create learning path           │
-│    - Estimate time commitment       │
-└─────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────┐
-│ 3. Resource Agent                   │
-│    - Curate best resources          │
-│    - Include hands-on projects      │
-│    - Add practice exercises         │
-└─────────────────────────────────────┘
-    ↓
-Response: Structured learning path
-```
-
-**LangGraph Implementation**:
 ```python
-# New nodes
-"learn_research" → "learn_structure" → "learn_resources" → "learn_response"
-
-# State additions
 class BotState(TypedDict):
+    command_type: Literal[
+        "context", "reminder", "github", "mention",
+        "latest_github", "greeting", "test_llm", "help", "chat",
+        "learn", "codereview", "reminder_list", "reminder_cancel",
+    ]
+    action_context: Optional[ActionContext]
+    reminder_data: Optional[ReminderData]
+    github_refs: list[str]
+    github_results: list[dict]
+    user_id: str
+    channel_id: str
+    message_ts: str
+    raw_input: str
+    response_message: str
+    needs_llm: bool
+    llm_summary: Optional[str]
+    thread_messages: list[dict]
+    max_messages: int
     learn_topic: str
     learn_resources: list[dict]
-    learn_path: list[dict]
-    learn_level: str  # beginner, intermediate, advanced
-```
-
-**MCP Tools Used**:
-- `fetch` - Get web content from documentation
-- `github` - Find example repos and code
-
-### 2. `/codereview <owner/repo> or <pr-url>`
-
-**Purpose**: Fan out 3 subagents to review code from different perspectives.
-
-**Flow**:
-```
-/codereview owner/repo#123
-    ↓
-┌─────────────────────────────────────┐
-│ Fetch PR diff via GitHub MCP        │
-└─────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────┐
-│ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-│ │ Security    │ │ Performance │ │ Best        │
-│ │ Reviewer    │ │ Reviewer    │ │ Practices   │
-│ │             │ │             │ │ Reviewer    │
-│ └─────────────┘ └─────────────┘ └─────────────┘
-└─────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────┐
-│ Merge & Format Response             │
-└─────────────────────────────────────┘
-    ↓
-Response: Consolidated review with suggestions
-```
-
-**LangGraph Implementation**:
-```python
-# New nodes
-"codereview_fetch" → fan_out → [
-    "codereview_security",
-    "codereview_performance", 
-    "codereview_best_practices"
-] → "codereview_merge" → "codereview_response"
-
-# State additions
-class BotState(TypedDict):
-    review_pr_url: str
-    review_diff: str
+    learn_path: dict
+    review_pr_data: dict
     review_security: str
     review_performance: str
     review_best_practices: str
-    review_merged: str
 ```
 
-**MCP Tools Used**:
-- `github` - Fetch PR details and diff
-- `filesystem` - Read local code if needed
-
-**Subagent Prompts**:
-
-1. **Security Reviewer**:
-   - Check for SQL injection, XSS, CSRF
-   - Review authentication/authorization
-   - Identify hardcoded secrets
-   - Flag insecure dependencies
-
-2. **Performance Reviewer**:
-   - Identify N+1 queries
-   - Check for memory leaks
-   - Review algorithm complexity
-   - Flag unnecessary API calls
-
-3. **Best Practices Reviewer**:
-   - Code style consistency
-   - Error handling patterns
-   - Documentation coverage
-   - Test coverage suggestions
-
-## Implementation Plan
-
-### Phase 1: MCP Client Setup
-
-```python
-# services/mcp_client.py
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
-class MCPClient:
-    def __init__(self):
-        self.sessions = {}
-    
-    async def connect(self, server_name: str, command: str, args: list):
-        """Connect to an MCP server"""
-        params = StdioServerParameters(command=command, args=args)
-        # ... connection logic
-    
-    async def call_tool(self, server_name: str, tool_name: str, args: dict):
-        """Call a tool on an MCP server"""
-        # ... tool call logic
-```
-
-### Phase 2: New Service Files
+## Intent Classification Flow
 
 ```
-services/
-├── mcp_client.py          # MCP client wrapper
-├── learn_service.py       # /learn logic
-└── codereview_service.py  # /codereview logic
+classify_intent(state):
+  empty input ──────────────────────► help (or context if thread msgs)
+  "test" / "test llm" ─────────────► test_llm
+  "learn ..." ─────────────────────► learn (via alias or regex)
+  "codereview ..." ────────────────► codereview (via alias or regex)
+  "coderview" / "review" / "pr" ──► codereview (difflib fuzzy match)
+  "summarize" / "catch me up" ────► context
+  "-r" / "remind" ────────────────► reminder
+  "reminders" / "reminder cancel" ► reminder_list / reminder_cancel
+  "latest issues/prs" ────────────► latest_github
+  "what can you do" / "help" ─────► help
+  "hi" / "hey" / "hello" ────────► greeting
+  github.com/.../pull/N ──────────► codereview
+  github.com/.../issues/N ────────► github
+  owner/repo#123 ─────────────────► github
+  thread messages exist ──────────► context
+  default ────────────────────────► chat
 ```
 
-### Phase 3: New Nodes
+## MCP Server Configuration
 
-```python
-# graph/nodes.py additions
+| Server | Package | Transport | Purpose |
+|---|---|---|---|
+| GitHub | `@modelcontextprotocol/server-github` | stdio (npm) | PR/issue fetch, repo search |
+| Fetch | `mcp-server-fetch` | stdio (uvx) | Web content fetching |
+| Slack | `services/mcp_slack_server.py` | stdio (in-repo) | Channel/thread message fetch |
 
-def classify_intent(state: BotState) -> BotState:
-    # Add new intents
-    if re.match(r'^learn\b', raw_lower):
-        state["command_type"] = "learn"
-        return state
-    
-    if re.match(r'^codereview\b', raw_lower):
-        state["command_type"] = "codereview"
-        return state
+All MCP servers initialize in a background daemon thread at startup. The bot boots immediately and connects MCP asynchronously.
 
-def learn_research(state: BotState) -> BotState:
-    """Research the topic using MCP tools"""
-    # ... implementation
+## Dependencies
 
-def codereview_fetch(state: BotState) -> BotState:
-    """Fetch PR diff via GitHub MCP"""
-    # ... implementation
-
-def codereview_security(state: BotState) -> BotState:
-    """Security review subagent"""
-    # ... implementation
-```
-
-### Phase 4: Workflow Updates
-
-```python
-# graph/workflow.py additions
-
-def build_graph() -> CompiledStateGraph:
-    g = StateGraph(BotState)
-    
-    # Existing nodes...
-    
-    # New learn nodes
-    g.add_node("learn_research", learn_research)
-    g.add_node("learn_structure", learn_structure)
-    g.add_node("learn_resources", learn_resources)
-    g.add_node("learn_response", learn_response)
-    
-    # New codereview nodes
-    g.add_node("codereview_fetch", codereview_fetch)
-    g.add_node("codereview_security", codereview_security)
-    g.add_node("codereview_performance", codereview_performance)
-    g.add_node("codereview_best_practices", codereview_best_practices)
-    g.add_node("codereview_merge", codereview_merge)
-    g.add_node("codereview_response", codereview_response)
-    
-    # Routing
-    g.add_conditional_edges("classify", route_after_classification, {
-        # ... existing routes
-        "learn": "learn_research",
-        "codereview": "codereview_fetch",
-    })
-    
-    # Learn flow
-    g.add_edge("learn_research", "learn_structure")
-    g.add_edge("learn_structure", "learn_resources")
-    g.add_edge("learn_resources", "learn_response")
-    g.add_edge("learn_response", END)
-    
-    # Codereview flow (fan-out)
-    g.add_edge("codereview_fetch", "codereview_security")
-    g.add_edge("codereview_fetch", "codereview_performance")
-    g.add_edge("codereview_fetch", "codereview_best_practices")
-    g.add_edge("codereview_security", "codereview_merge")
-    g.add_edge("codereview_performance", "codereview_merge")
-    g.add_edge("codereview_best_practices", "codereview_merge")
-    g.add_edge("codereview_merge", "codereview_response")
-    g.add_edge("codereview_response", END)
-    
-    return g.compile()
-```
-
-## Dependencies to Add
-
-```toml
-# pyproject.toml
-dependencies = [
-    # ... existing
-    "mcp>=1.0.0",
-    "anyio>=4.0.0",
-]
-```
-
-## Environment Variables
-
-```env
-# .env
-GITHUB_TOKEN=ghp_...
-MCP_GITHUB_SERVER=true
-MCP_FETCH_SERVER=true
-```
-
-## Testing
-
-### /learn Test Cases
-
-```bash
-/sab learn python async programming
-/sab learn machine learning basics
-/sab learn kubernetes deployment
-```
-
-Expected: Structured learning path with resources, time estimates, and skill levels.
-
-### /codereview Test Cases
-
-```bash
-/sab codereview owner/repo#123
-/sab codereview https://github.com/owner/repo/pull/123
-/sab codereview #456
-```
-
-Expected: Three-section review (security, performance, best practices) with actionable suggestions.
-
-## Success Criteria
-
-1. `/learn` returns structured learning path with 3+ resources
-2. `/codereview` returns three distinct review perspectives
-3. Both commands complete within 30 seconds
-4. MCP servers can be swapped without code changes
-5. Graceful fallback if MCP server unavailable
-
-## Future Extensions
-
-- Add more MCP servers (Slack, Jira, Linear)
-- Add `/compare` command for diff analysis
-- Add `/document` command for auto-documentation
-- Persistent learning progress via MCP memory server
+| Package | Purpose |
+|---|---|
+| `langgraph` | StateGraph workflow orchestration |
+| `slack-bolt` | Socket Mode event handling |
+| `requests` | HTTP calls to llama-server and GitHub API |
+| `apscheduler[sqlalchemy]` | SQLite-persisted reminder scheduling |
+| `pydantic` | Type-safe state models |
+| `mcp` | MCP Python SDK client |
+| `anyio` | Async runtime for MCP |
+| `cachetools` | TTL cache for GitHub repos |
+| `dateparser` | Natural language time parsing |
+| `python-dotenv` | Environment variable loading |

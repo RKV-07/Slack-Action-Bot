@@ -1,80 +1,137 @@
 # Slack Advanced Actions Bot (SAB)
 
-A smart Slack bot that contextualizes mentions, sets reminders, and auto-detects GitHub issues/PRs — all powered by **LangGraph** for agentic workflow orchestration.
+A smart Slack bot powered by **LangGraph** and **local Qwen3-8B** for agentic workflow orchestration — no cloud API costs.
 
 ## Features
 
-- **Action Context** — `/sab` in a thread captures who mentioned you and what they asked
-- **Smart Reminders** — `/sab -r "Check the bug" @30m` sets timed reminders via APScheduler
-- **GitHub Lookup** — Mention `#123` or `org/repo#456` and the bot auto-fetches issue status
-- **Mention Detection** — Bot suggests `/sab` when you're mentioned in a channel
+| Feature | Command | Description |
+|---|---|---|
+| Summarize | `/sab summarize` or mention | Summarizes last 25 messages using local LLM |
+| Reminders | `/sab -r "task" @30m` | Set timed reminders (persisted in SQLite) |
+| Natural Language Reminders | `/sab remind me to...` | dateparser handles "tomorrow at 3pm" |
+| List Reminders | `/sab reminders` | Show all pending reminders with IDs |
+| Cancel Reminder | `/sab reminder cancel <id>` | Cancel by job ID |
+| GitHub Issue/PR Lookup | `owner/repo#123` or paste URL | Fetches issue/PR details |
+| Latest Issues | `/sab latest issues` | Newest open issues across all repos |
+| Latest PRs | `/sab latest prs` | Newest open PRs across all repos |
+| Code Review | `/sab codereview owner/repo#123` | 3-subagent review (Security + Performance + Best Practices) |
+| Semgrep Security | (auto in code review) | Real static analysis grounding |
+| Learning Paths | `/sab learn <topic>` | 3-agent research → structure → resources |
+| Web Search | (auto in /learn) | Tavily API for real URLs |
+| Help | `/sab` or "what can you do" | Static command list |
+| LLM Test | `/sab test` | Verifies llama-server connection |
+| Typo Tolerance | "coderview", "review", "pr" | difflib fuzzy matching |
 
 ## Architecture
 
 Built with **LangGraph StateGraph** for deterministic, debuggable agentic workflows:
 
 ```
-User Input
-    |
-    v
-[classify_intent] --- conditional routing ---> parse_reminder --> schedule_reminder
-    |                                             |
-    +---> extract_github_refs --> fetch_github --> github_response
-    |
-    +---> summarize_action --> context_response
-    |
-    +---> mention_response / unknown_response
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Slack Workspace                              │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │ Socket Mode (WebSocket)
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  main.py (Bolt App)                                                 │
+│  ├── /sab command ──► cmd_sab() ──► handle_sab_command()           │
+│  ├── app_mention ──► on_mention() ──► handle_app_mention()         │
+│  └── message ──► on_message() ──► handle_message_event()           │
+└────────────────────────────┬────────────────────────────────────────┘
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  graph/workflow.py (LangGraph StateGraph)                           │
+│  ┌──────────┐                                                       │
+│  │ classify │ ◄── entry_point                                       │
+│  └────┬─────┘                                                       │
+│       │ 12 conditional routes                                       │
+│       ├──► reminder (parse → schedule / list / cancel)              │
+│       ├──► github (extract → fetch → response)                      │
+│       ├──► context (summarize → response)                           │
+│       ├──► learn (research → structure → resources → response)      │
+│       ├──► codereview (fetch → [security,performance,best] → merge) │
+│       ├──► help / greeting / chat / test_llm                        │
+└────────────────────────────┬────────────────────────────────────────┘
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  services/                                                          │
+│  ├── llm_service.py ──► llama-server (Qwen3-8B, localhost:8080)    │
+│  ├── github_service.py ──► GitHub API (TTL cache, rate-limit track) │
+│  ├── codereview_service.py ──► Semgrep + 3 LLM subagents           │
+│  ├── learn_service.py ──► Tavily search + GitHub repos + LLM        │
+│  ├── reminder_service.py ──► SQLite-backed APScheduler              │
+│  └── mcp_client.py ──► GitHub/Fetch/Slack MCP servers               │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Tech Stack
-- **LangGraph** — StateGraph workflow orchestration
+- **LangGraph** — StateGraph workflow orchestration with fan-out/fan-in
 - **Slack Bolt** — Socket Mode event handling
-- **Google Gemini** — LLM for context summarization
-- **APScheduler** — Background reminder scheduling
-- **GitHub API** — Issue/PR live status
+- **Local Qwen3-8B** — LLM via llama-server (no cloud API)
+- **APScheduler** — SQLite-persisted reminder scheduling
+- **GitHub API** — Issue/PR lookup with TTL cache
+- **MCP** — Model Context Protocol for extensible tool access
+- **Semgrep** — Real static analysis for security reviews
+- **Tavily** — Web search for verified learning resources
+- **dateparser** — Natural language time parsing
+- **difflib** — Typo-tolerant command matching
 - **Pydantic** — Type-safe state models
 
 ## Project Structure
 
 ```
 Slack-Action-Bot/
-├── main.py              # Entry point, Slack Bolt app setup
-├── config.py            # Environment variable validation
+├── main.py                      # Bolt app, MCP init, dedup guard
+├── config.py                    # Env vars (tokens, endpoints)
 ├── graph/
-│   ├── state.py         # BotState TypedDict + Pydantic models
-│   ├── nodes.py         # All workflow node functions
-│   └── workflow.py      # LangGraph StateGraph definition
+│   ├── state.py                 # BotState TypedDict, ReminderData
+│   ├── nodes.py                 # 30+ node functions
+│   └── workflow.py              # StateGraph build, routing logic
 ├── handlers/
-│   ├── commands.py      # /sab slash command handler
-│   └── events.py        # Message + app_mention event handlers
+│   ├── commands.py              # /sab slash command handler
+│   ├── events.py                # app_mention + message handlers
+│   └── shared.py                # is_real_message, fetch_*, build_initial_state
 ├── services/
-│   ├── github_service.py    # GitHub API integration
-│   ├── llm_service.py       # Gemini LLM summarization
-│   └── reminder_service.py  # APScheduler reminder scheduling
-├── .env.example
-├── pyproject.toml
-└── CHANGELOG.md
+│   ├── llm_service.py           # Local LLM calls, PERSONA, summarize
+│   ├── github_service.py        # GitHub API, TTL cache, rate-limit tracking
+│   ├── codereview_service.py    # 3-subagent review, Semgrep
+│   ├── learn_service.py         # 3-agent learning path, Tavily search
+│   ├── reminder_service.py      # SQLite-backed APScheduler
+│   ├── mcp_client.py            # MCP AsyncExitStack, background loop
+│   ├── mcp_slack_server.py      # Custom Slack MCP server (stdio)
+│   ├── slack_summarize_service.py # MCP-first channel summary
+│   └── slack_features.py        # Processing reaction decorator
+├── reminders.db                 # SQLite persistent reminders
+├── test_all.py                  # 131 unit tests
+├── test_e2e.py                  # 45 end-to-end tests
+└── pyproject.toml               # Dependencies (uv-managed)
 ```
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and fill in your tokens:
+1. Start llama-server with Qwen3-8B:
+   ```bash
+   llama-server -m models/qwen3-8b-q4_k_m.gguf --port 8080 --parallel 4
+   ```
+
+2. Copy `.env.example` to `.env` and fill in:
    ```
    SLACK_BOT_TOKEN=xoxb-...
    SLACK_APP_TOKEN=xapp-...
    SLACK_SIGNING_SECRET=...
    GITHUB_TOKEN=ghp-...
-   DEFAULT_GITHUB_REPO=owner/repo
-   GOOGLE_API_KEY=...
+   LLAMA_BASE_URL=http://localhost:8080
+   LLAMA_PARALLEL=4
+   TAVILY_API_KEY=tvly-...        # optional, for /learn web search
    ```
 
-2. Install dependencies:
-   ```
+3. Install dependencies:
+   ```bash
    uv sync
    ```
 
-3. Run the bot:
-   ```
+4. Run the bot:
+   ```bash
    uv run main.py
    ```
 
@@ -82,8 +139,16 @@ Slack-Action-Bot/
 
 | Command | Description |
 |---------|-------------|
-| `/sab` | Capture action context in a thread |
+| `/sab` | Show help / command list |
+| `/sab summarize` | Summarize channel or thread messages |
 | `/sab -r "task" @30m` | Set a reminder in 30 minutes |
-| `/sab -r "task" @2h` | Set a reminder in 2 hours |
-| `#123` | Auto-fetch GitHub issue #123 |
-| `org/repo#456` | Auto-fetch issue from specific repo |
+| `/sab remind me to...` | Natural language reminder |
+| `/sab reminders` | List pending reminders |
+| `/sab reminder cancel <id>` | Cancel a reminder |
+| `/sab latest issues` | Newest open issues across all repos |
+| `/sab latest prs` | Newest open PRs across all repos |
+| `/sab codereview owner/repo#123` | 3-perspective code review |
+| `/sab learn <topic>` | Structured learning path |
+| `/sab test` | Test LLM connection |
+| `owner/repo#123` | Auto-fetch issue/PR details |
+| Paste GitHub URL | Auto-fetch issue/PR details |
