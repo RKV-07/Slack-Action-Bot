@@ -51,10 +51,12 @@ A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local 
 │  │list     ││response││response │                               │   │
 │  │cancel   │└────────┘└─────────┘                               │   │
 │  └─────────┘                                                     │   │
-│       │     ┌──────────────────────────────┐                     │   │
 │       │     │ learn_research                │                     │   │
 │       │     │ learn_structure ──► response  │                     │   │
 │       │     │ learn_resources               │                     │   │
+│       │     └──────────────────────────────┘                     │   │
+│       │     ┌──────────────────────────────┐                     │   │
+│       │     │ search ──────────────────────│──► END              │   │
 │       │     └──────────────────────────────┘                     │   │
 │       │     ┌──────────────────────────────┐                     │   │
 │       │     │ codereview_fetch              │                     │   │
@@ -102,6 +104,7 @@ A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local 
 |---|---|
 | LangGraph StateGraph | Structured routing, fan-out for parallel reviewers |
 | Local Qwen3-8B | Zero API cost, fast inference, no rate limits |
+| Dual LLM (`LLM_PROVIDER`) | Local Qwen3 primary; Gemini cross-fallback when `LLM_FALLBACK_ENABLED=true` |
 | `/no_think` prefix | Qwen3 returns reasoning in `reasoning_content` field; prefix bypasses |
 | MCP primary, direct API fallback | Extensible tool access, graceful degradation |
 | `difflib` fuzzy matching | Typo tolerance without new dependencies |
@@ -114,13 +117,17 @@ A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local 
 | Tavily in learn service | Real URLs instead of LLM-invented links |
 | MCP source-transparency footer | Visible proof of MCP usage in every review/resource output |
 | `_call_with_backoff()` | Rate-limit resilience for Slack API calls |
-| `md_to_slack_mrkdwn()` | Fixes broken Markdown before posting to Slack |
+| `md_to_slack_mrkdwn()` | Fixes broken Markdown and bare URLs before posting to Slack |
 | `trigger_id` dedup on `/sab` | Prevents Socket Mode redelivery duplicates |
 | `event_ts` dedup on mention/message | Prevents duplicate processing on redelivered events |
 | `is_real_message()` unified filter | Single source of truth across all 3 fetch paths |
 | `ThreadPoolExecutor(5)` | Bounded concurrent graph executions |
+| Values over globals | Thread-safe: `via_mcp`, `semgrep_findings` threaded through BotState |
+| Slack Real-Time Search | Cross-channel search via `assistant.search.context` with graceful fallback |
 
 ## BotState TypedDict
+
+Thread-safe: all cross-cutting values (MCP source flags, Semgrep findings) flow through state fields instead of module-level globals.
 
 ```python
 class BotState(TypedDict):
@@ -128,6 +135,7 @@ class BotState(TypedDict):
         "context", "reminder", "github", "mention",
         "latest_github", "greeting", "test_llm", "help", "chat",
         "learn", "codereview", "reminder_list", "reminder_cancel",
+        "digest", "duplicate", "release_notes",
     ]
     action_context: Optional[ActionContext]
     reminder_data: Optional[ReminderData]
@@ -145,10 +153,14 @@ class BotState(TypedDict):
     learn_topic: str
     learn_resources: list[dict]
     learn_path: dict
+    learn_via_mcp: bool
     review_pr_data: dict
     review_security: str
     review_performance: str
     review_best_practices: str
+    review_warning: str
+    review_via_mcp: bool
+    review_semgrep_findings: list
 ```
 
 ## Intent Classification Flow

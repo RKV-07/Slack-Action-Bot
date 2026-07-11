@@ -1,6 +1,6 @@
 # Slack Advanced Actions Bot (SAB)
 
-A smart Slack bot powered by **LangGraph** and **local Qwen3-8B** for agentic workflow orchestration — no cloud API costs.
+A smart Slack bot powered by **LangGraph** and **local Qwen3-8B** (with optional Gemini fallback) for agentic workflow orchestration.
 
 ## Features
 
@@ -20,9 +20,16 @@ A smart Slack bot powered by **LangGraph** and **local Qwen3-8B** for agentic wo
 | Learning Paths | `/sab learn <topic>` | 3-agent research → structure → resources |
 | Web Search | (auto in /learn) | Tavily API for real URLs |
 | MCP Source Footer | (auto in review/learn) | Visible "via GitHub MCP" or fallback note |
+| Slack mrkdwn Auto-fix | (auto) | Bold, links, and bare URLs converted to Slack format |
 | Help | `/sab` or "what can you do" | Static command list |
-| System Diagnostics | `/sab test` | Checks LLM + all 3 MCP sessions |
+| System Diagnostics | `/sab test` | Checks LLM provider + all 3 MCP sessions |
+| Daily Digest | `/sab digest subscribe` | Proactive daily GitHub issues/PRs post |
+| Digest Demo | `/sab digest demo` | Preview digest in ~2 minutes |
+| Duplicate Check | `/sab duplicate owner/repo "title"` | Find similar open issues via difflib |
+| Release Notes | `/sab release notes owner/repo` | Generate notes from merged PRs |
+| Dual LLM | `LLM_PROVIDER=local\|gemini` | Local Qwen3 primary, Gemini cross-fallback |
 | Typo Tolerance | "coderview", "review", "pr" | difflib fuzzy matching |
+| Real-Time Search | `/sab search <query>` or `@bot find discussions about X` | Cross-channel search via Slack RTS API |
 
 ## Architecture
 
@@ -105,6 +112,7 @@ Slack-Action-Bot/
 │   ├── mcp_client.py            # MCP AsyncExitStack, background loop, _evict_session()
 │   ├── mcp_slack_server.py      # Custom Slack MCP server (stdio)
 │   ├── slack_summarize_service.py # MCP-first channel summary
+│   ├── slack_search_service.py   # Real-time search via assistant.search.context
 │   └── slack_features.py        # Processing reaction decorator
 ├── reminders.db                 # SQLite persistent reminders
 ├── test_all.py                  # 131 unit tests
@@ -127,12 +135,19 @@ Slack-Action-Bot/
    GITHUB_TOKEN=ghp-...
    LLAMA_BASE_URL=http://localhost:8080
    LLAMA_PARALLEL=4
-   TAVILY_API_KEY=tvly-...        # optional, for /learn web search
-   ```
+   LLM_PROVIDER=local
+   LLM_FALLBACK_ENABLED=true
+   GOOGLE_API_KEY=...          # optional, Gemini fallback when local fails
+   GEMINI_MODEL=gemini-2.0-flash
+    TAVILY_API_KEY=tvly-...        # optional, for /learn web search
+    # Add search:read.public, search:read.files, search:read.users scopes
+    # in your Slack app config for real-time search
+    ```
 
 3. Install dependencies:
    ```bash
    uv sync
+   uv sync --group optional   # installs semgrep for code review static analysis
    ```
 
 4. Run the bot:
@@ -154,6 +169,12 @@ Slack-Action-Bot/
 | `/sab latest prs` | Newest open PRs across all repos |
 | `/sab codereview owner/repo#123` | 3-perspective code review with risk score |
 | `/sab learn <topic>` | Structured learning path |
-| `/sab test` | Diagnostics: LLM + MCP health check |
+| `/sab digest subscribe` | Daily GitHub digest at 9am UTC |
+| `/sab digest demo` | Preview digest in ~2 minutes |
+| `/sab duplicate owner/repo "title"` | Find similar open issues |
+| `/sab release notes owner/repo` | Generate release notes from merged PRs |
+| `/sab test` | Diagnostics: LLM provider + MCP health check |
+| `/sab search <query>` | Real-time cross-channel search (needs `search:read` scopes) |
+| `@bot find discussions about X` | Same, via @mention (action_token required) |
 | `owner/repo#123` | Auto-fetch issue/PR details |
 | Paste GitHub URL | Auto-fetch issue/PR details |

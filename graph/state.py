@@ -22,6 +22,7 @@ class BotState(TypedDict):
         "context", "reminder", "github", "mention",
         "latest_github", "greeting", "test_llm", "help", "chat",
         "learn", "codereview", "reminder_list", "reminder_cancel",
+        "digest", "duplicate", "release_notes", "search",
     ]
     action_context: Optional[ActionContext]
     reminder_data: Optional[ReminderData]
@@ -40,6 +41,7 @@ class BotState(TypedDict):
     learn_topic: str
     learn_resources: list[dict]
     learn_path: dict
+    learn_via_mcp: bool
     # Code review fields
     review_pr_data: dict
     review_security: str
@@ -48,3 +50,6 @@ class BotState(TypedDict):
     review_warning: str
     review_via_mcp: bool
     review_semgrep_findings: list
+    # Real-time search fields
+    action_token: str
+    search_query: str

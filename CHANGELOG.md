@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.1 — Dual LLM, New Features, Bug Fixes (2026-07-12)
+
+### New Features
+- **Dual LLM provider**: `LLM_PROVIDER=local|gemini` with `LLM_FALLBACK_ENABLED` cross-fallback (local Qwen3 primary, Gemini safety net)
+- **Daily digest**: `/sab digest subscribe|unsubscribe|demo` — proactive GitHub issues/PRs via APScheduler cron
+- **Duplicate detection**: `/sab duplicate owner/repo "title"` — difflib similarity over open issues
+- **Release notes**: `/sab release notes owner/repo` — LLM-grouped notes from merged PRs
+
+### Bug Fixes
+- Learn MCP footer always showed REST fallback — `learn_via_mcp` now threaded through BotState
+- Natural-language reminder text left `"me to"` connector words — stripped in dateparser branch
+- Codereview showed fake reviews when LLM failed — visible warning banner when 2+ fallback strings detected
+- File truncation disclosure when reviewing large PRs (5 of N files)
+- Semgrep added as optional dependency group in pyproject.toml
+
+### Tests
+- 20+ new unit/E2E tests for risk score, footer formatting, LLM provider, and new commands
+
+---
+
 ## v2.0 — Full Feature Set (2026-07-11)
 
 ### New Features

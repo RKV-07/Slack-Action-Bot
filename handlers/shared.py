@@ -154,6 +154,7 @@ def build_initial_state(
     original_message: str = "",
     mentioned_by: str = None,
     thread_messages: list[dict] = None,
+    action_token: str = "",
 ) -> dict:
     action_ctx = None
     if original_message:
@@ -184,6 +185,7 @@ def build_initial_state(
         "learn_topic": "",
         "learn_resources": [],
         "learn_path": {},
+        "learn_via_mcp": False,
         # Code review fields
         "review_pr_data": {},
         "review_security": "",
@@ -192,4 +194,7 @@ def build_initial_state(
         "review_warning": "",
         "review_via_mcp": False,
         "review_semgrep_findings": [],
+        # Real-time search
+        "action_token": action_token or "",
+        "search_query": "",
     }

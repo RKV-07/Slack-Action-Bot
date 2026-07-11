@@ -13,6 +13,11 @@ LLAMA_BASE_URL = os.environ.get("LLAMA_BASE_URL", "http://localhost:8080")
 LLAMA_PARALLEL = os.environ.get("LLAMA_PARALLEL")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 
+# LLM: local Qwen3 (primary default) with optional Gemini cross-fallback
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "local").lower()
+LLM_FALLBACK_ENABLED = os.environ.get("LLM_FALLBACK_ENABLED", "true").lower() == "true"
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+
 # MCP Server Configuration (MCP primary, direct API as fallback)
 MCP_GITHUB_ENABLED = os.environ.get("MCP_GITHUB_ENABLED", "true").lower() == "true"
 MCP_FETCH_ENABLED = os.environ.get("MCP_FETCH_ENABLED", "true").lower() == "true"

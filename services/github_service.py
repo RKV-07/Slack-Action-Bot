@@ -1,4 +1,5 @@
 import re
+import difflib
 import requests
 from typing import Optional
 from cachetools import TTLCache, cached
@@ -283,4 +284,45 @@ def fetch_repo_prs(repo: str, count: int = 5) -> list[dict]:
         print(f"[GitHub] Latest PRs for {repo}: HTTP {resp.status_code}")
     except requests.RequestException as e:
         print(f"[GitHub] Error fetching latest PRs: {e}")
+    return []
+
+
+def find_similar_issues(repo: str, new_title: str, threshold: float = 0.55, count: int = 50) -> list[dict]:
+    """Find open issues with similar titles using difflib."""
+    issues = fetch_repo_issues(repo, count=count)
+    scored = sorted(
+        (
+            (difflib.SequenceMatcher(None, new_title.lower(), i["title"].lower()).ratio(), i)
+            for i in issues
+        ),
+        key=lambda x: -x[0],
+    )
+    return [{"score": round(s, 2), **i} for s, i in scored if s >= threshold][:3]
+
+
+def fetch_merged_prs(repo: str, count: int = 15) -> list[dict]:
+    """Fetch recently merged PRs from a repo."""
+    if not GITHUB_TOKEN:
+        print("[GitHub] GITHUB_TOKEN not set")
+        return []
+
+    url = f"{_GITHUB_API}/repos/{repo}/pulls"
+    params = {"state": "closed", "per_page": count, "sort": "updated", "direction": "desc"}
+
+    try:
+        resp = requests.get(url, headers=_headers(), params=params, timeout=10)
+        _check_rate_limit(resp)
+        if resp.status_code == 200:
+            return [
+                {
+                    "title": p["title"],
+                    "number": p["number"],
+                    "url": p["html_url"],
+                }
+                for p in resp.json()
+                if p.get("merged_at")
+            ]
+        print(f"[GitHub] fetch_merged_prs for {repo}: HTTP {resp.status_code}")
+    except requests.RequestException as e:
+        print(f"[GitHub] Error fetching merged PRs: {e}")
     return []

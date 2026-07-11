@@ -1153,5 +1153,120 @@ class TestGraphIntegration:
         assert result["response_message"] != ""
 
 
+# ══════════════════════════════════════════════════════════════════
+# v2.1: Risk score, footer, learn_via_mcp, LLM provider, features
+# ══════════════════════════════════════════════════════════════════
+
+class TestRiskScore:
+    def test_high_risk_past_200_chars(self):
+        from services.codereview_service import _risk_score
+        text = "x" * 300 + "Risk Level: High"
+        assert _risk_score(text) == "🔴 High"
+
+    def test_semgrep_error_is_high(self):
+        from services.codereview_service import _risk_score
+        findings = [{"severity": "ERROR"}]
+        assert _risk_score("no issues", findings) == "🔴 High"
+
+    def test_low_default(self):
+        from services.codereview_service import _risk_score
+        assert _risk_score("Risk Level: Low") == "🟢 Low"
+
+
+class TestMergeReviewsFormatting:
+    def test_footer_no_double_underscore(self):
+        from services.codereview_service import merge_reviews
+        out = merge_reviews("sec", "perf", "best", {"title": "T"}, via_mcp=True)
+        assert "via GitHub MCP" in out
+        assert "__" not in out
+
+
+class TestCodereviewLLMFailure:
+    def test_warning_on_all_fallbacks(self):
+        from services.codereview_service import (
+            merge_reviews, _FALLBACK_SECURITY, _FALLBACK_PERFORMANCE, _FALLBACK_BEST,
+        )
+        out = merge_reviews(
+            _FALLBACK_SECURITY, _FALLBACK_PERFORMANCE, _FALLBACK_BEST,
+            {"title": "T", "files": []},
+        )
+        assert "LLM unavailable" in out
+
+
+class TestLearnViaMcp:
+    @patch("graph.nodes.research_topic")
+    def test_flag_stored_in_state(self, mock_research):
+        from graph.nodes import learn_research
+        mock_research.return_value = {"resources": [], "search_via_mcp": True}
+        state = {"learn_topic": "python", "response_message": ""}
+        result = learn_research(state)
+        assert result["learn_via_mcp"] is True
+
+
+class TestLLMProvider:
+    @patch("services.llm_service._local_completion", return_value="")
+    @patch("services.llm_service._gemini_completion", return_value="gemini ok")
+    @patch("services.llm_service.LLM_PROVIDER", "local")
+    @patch("services.llm_service.LLM_FALLBACK_ENABLED", True)
+    @patch("services.llm_service.GOOGLE_API_KEY", "key")
+    def test_cross_fallback_local_to_gemini(self, mock_gemini, mock_local):
+        from services.llm_service import _chat_completion
+        assert _chat_completion("hi") == "gemini ok"
+
+    @patch("services.llm_service._local_completion", return_value="local ok")
+    @patch("services.llm_service.LLM_PROVIDER", "local")
+    def test_local_primary(self, mock_local):
+        from services.llm_service import _chat_completion
+        assert _chat_completion("hi") == "local ok"
+
+
+class TestFindSimilarIssues:
+    @patch("services.github_service.fetch_repo_issues")
+    def test_finds_similar(self, mock_issues):
+        from services.github_service import find_similar_issues
+        mock_issues.return_value = [
+            {"title": "Fix login bug on mobile", "url": "http://1", "number": 42},
+            {"title": "Unrelated feature", "url": "http://2", "number": 43},
+        ]
+        results = find_similar_issues("owner/repo", "fix login bug mobile")
+        assert len(results) >= 1
+        assert results[0]["score"] >= 0.55
+
+
+class TestFetchMergedPrs:
+    @patch("services.github_service.requests.get")
+    def test_filters_merged_only(self, mock_get):
+        from services.github_service import fetch_merged_prs
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            headers={},
+            json=lambda: [
+                {"title": "Merged PR", "number": 1, "html_url": "http://1", "merged_at": "2026-01-01"},
+                {"title": "Closed not merged", "number": 2, "html_url": "http://2", "merged_at": None},
+            ],
+        )
+        results = fetch_merged_prs("owner/repo")
+        assert len(results) == 1
+        assert results[0]["title"] == "Merged PR"
+
+
+class TestClassifyNewCommands:
+    def _make_state(self, raw):
+        from graph.nodes import classify_intent
+        return classify_intent({
+            "raw_input": raw, "thread_messages": [], "command_type": "help",
+            "needs_llm": False, "learn_topic": "",
+        })
+
+    def test_digest(self):
+        assert self._make_state("digest subscribe")["command_type"] == "digest"
+
+    def test_duplicate(self):
+        assert self._make_state('duplicate owner/repo "title"')["command_type"] == "duplicate"
+
+    def test_release_notes(self):
+        assert self._make_state("release notes owner/repo")["command_type"] == "release_notes"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

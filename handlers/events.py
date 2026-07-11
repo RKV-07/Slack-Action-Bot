@@ -98,6 +98,7 @@ def handle_app_mention(event: dict, client, say, context: dict = None):
         original_message=original_msg or raw_text,
         mentioned_by=user_id,
         thread_messages=thread_messages,
+        action_token=event.get("action_token", ""),
     )
 
     thread = threading.Thread(target=_execute_graph_async, args=(state, say))

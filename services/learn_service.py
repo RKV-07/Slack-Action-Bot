@@ -205,9 +205,11 @@ def curate_resources(topic: str, resources: list, path: dict, search_via_mcp: bo
         source_note = "via GitHub MCP" if search_via_mcp else "via GitHub REST API (fallback)"
         return f"{result}\n\n_{source_note}_"
 
+    source_note = "via GitHub MCP" if search_via_mcp else "via GitHub REST API (fallback)"
     return (
         f"**Learning Path: {topic}**\n\n"
         f"**Levels:**\n{levels_text}\n\n"
         f"**Resources:**\n{resource_text}\n\n"
-        f"Start with the beginner level and practice regularly!"
+        f"Start with the beginner level and practice regularly!\n\n"
+        f"_{source_note}_"
     )

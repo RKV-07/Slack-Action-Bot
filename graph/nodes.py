@@ -5,7 +5,7 @@ from services.github_service import (
     fetch_github_issue, detect_github_refs,
     fetch_latest_issues, fetch_latest_prs,
     fetch_repo_issues, fetch_repo_prs,
-    extract_repo_from_text,
+    extract_repo_from_text, find_similar_issues,
 )
 from services.reminder_service import schedule_reminder, list_reminders, cancel_reminder
 from services.llm_service import generate_reply, summarize_thread_messages
@@ -97,6 +97,35 @@ def classify_intent(state: BotState) -> BotState:
         if re.search(r'\b(?:issues?|prs?|pull)\b', raw_lower):
             state["command_type"] = "latest_github"
             return state
+
+    # digest subscribe/unsubscribe/demo
+    if re.match(r'^digest\b', raw_lower):
+        state["command_type"] = "digest"
+        return state
+
+    # duplicate issue detection
+    if re.match(r'^duplicate\b', raw_lower):
+        state["command_type"] = "duplicate"
+        return state
+
+    # release notes generator
+    if re.search(r'\brelease\s+notes?\b', raw_lower):
+        state["command_type"] = "release_notes"
+        return state
+
+    # real-time search: /sab search <query> or @bot find discussions about X
+    if re.match(r'^search\b', raw_lower):
+        state["command_type"] = "search"
+        state["search_query"] = re.sub(r'^search\s*', '', state["raw_input"].strip(), flags=re.IGNORECASE).strip()
+        return state
+    search_nl = re.search(
+        r'(?:find|search)\s+(?:discussions?|messages?|threads?|conversations?)\s+(?:about|on|for)\s+(.+)',
+        raw_lower,
+    )
+    if search_nl:
+        state["command_type"] = "search"
+        state["search_query"] = search_nl.group(1).strip()
+        return state
 
     # help intent — must come before greeting_words to prevent misrouting
     HELP_PHRASES = {
@@ -253,6 +282,9 @@ def parse_reminder(state: BotState) -> BotState:
                         r'\b(in \d+ \w+|tomorrow|next \w+|at \d+:\d+|\d+ (?:hours?|minutes?|mins?|hrs?)\w*)',
                         '', task_text, flags=re.IGNORECASE
                     ).strip().rstrip('to ').strip()
+                    reminder_text = re.sub(
+                        r'^\s*(me\s+to\s+|to\s+)', '', reminder_text, flags=re.IGNORECASE
+                    ).strip()
                     if not reminder_text:
                         reminder_text = task_text
 
@@ -429,8 +461,19 @@ def build_help_response(state: BotState) -> BotState:
         "• Works with a pasted PR link too\n\n"
         "*📚 Learn*\n"
         "• `/sab learn <topic>` — a structured learning path with resources\n\n"
+        "*📅 Daily Digest*\n"
+        "• `/sab digest subscribe` — daily GitHub issues/PRs at 9am UTC\n"
+        "• `/sab digest demo` — preview digest in ~2 minutes\n"
+        "• `/sab digest unsubscribe` — cancel digest\n\n"
+        "*🔎 Duplicate Check*\n"
+        "• `/sab duplicate owner/repo \"issue title\"` — find similar open issues\n\n"
+        "*📋 Release Notes*\n"
+        "• `/sab release notes owner/repo` — generate notes from merged PRs\n\n"
+        "*🔍 Workspace Search*\n"
+        "• `@bot find discussions about <topic>` — search all channels (needs search:read scope)\n"
+        "• `/sab search <query>` — same, but @mention works best (action_token required)\n\n"
         "*🩺 Diagnostics*\n"
-        "• `/sab test` — checks the local LLM connection\n\n"
+        "• `/sab test` — checks LLM provider + MCP health\n\n"
         "@mention me anytime, or use `/sab` — I'll figure out what you need."
     )
     return state
@@ -449,24 +492,32 @@ def build_chat_response(state: BotState) -> BotState:
 
 
 def test_llm_connection(state: BotState) -> BotState:
-    from services.llm_service import _chat_completion
+    from services.llm_service import check_local_llm, check_gemini_llm
     from services.mcp_client import mcp_client
+    from config import LLM_PROVIDER, LLM_FALLBACK_ENABLED, GOOGLE_API_KEY
 
-    result = _chat_completion("Say OK", max_tokens=5)
-    llm_ok = bool(result)
+    llm_ok = check_local_llm()
+    gemini_ok = check_gemini_llm() if GOOGLE_API_KEY else False
     mcp_status = {name: mcp_client.health_check(name) for name in ("github", "fetch", "slack")}
 
-    lines = [f"{'✓' if llm_ok else '✗'} Local LLM (Qwen3-8B)"]
+    primary = LLM_PROVIDER if LLM_PROVIDER in ("local", "gemini") else "local"
+    fallback_label = "enabled" if LLM_FALLBACK_ENABLED else "disabled"
+    lines = [f"Provider: {primary} (primary) · Fallback: {fallback_label}\n"]
+    lines.append(f"{'✓' if llm_ok else '✗'} Local LLM (Qwen3-8B)")
+    if GOOGLE_API_KEY:
+        lines.append(f"{'✓' if gemini_ok else '✗'} Gemini API")
     lines += [f"{'✓' if ok else '✗'} MCP: {name}" for name, ok in mcp_status.items()]
 
-    all_ok = llm_ok and all(mcp_status.values())
+    all_ok = (llm_ok if primary == "local" else gemini_ok) and all(mcp_status.values())
     if all_ok:
-        lines.insert(0, "All systems operational\n")
+        lines.insert(1, "All systems operational\n")
     else:
         failed = [name for name, ok in mcp_status.items() if not ok]
         hint = []
-        if not llm_ok:
-            hint.append("llama-server running on port 8080?")
+        if primary == "local" and not llm_ok:
+            hint.append("llama-server running on port 8080 with -c 16384?")
+        if primary == "gemini" and not gemini_ok:
+            hint.append("GOOGLE_API_KEY valid?")
         if failed:
             hint.append(f"MCP ({', '.join(failed)}) connected?")
         lines.append(f"\nHint: Check {' & '.join(hint)}")
@@ -492,6 +543,7 @@ def learn_research(state: BotState) -> BotState:
     print(f"[Learn] Researching topic: {topic}")
     result = research_topic(topic)
     state["learn_resources"] = result.get("resources", [])
+    state["learn_via_mcp"] = result.get("search_via_mcp", False)
     return state
 
 
@@ -521,7 +573,10 @@ def learn_resources(state: BotState) -> BotState:
     path = state.get("learn_path", {})
 
     print(f"[Learn] Curating resources for: {topic}")
-    summary = curate_resources(topic, resources, path)
+    summary = curate_resources(
+        topic, resources, path,
+        search_via_mcp=state.get("learn_via_mcp", False),
+    )
     state["response_message"] = summary
     return state
 
@@ -641,4 +696,108 @@ def codereview_response(state: BotState) -> BotState:
     """Ensure response is set."""
     if not state.get("response_message"):
         state["response_message"] = "Code review completed. Try `/sab codereview owner/repo#123`"
+    return state
+
+
+# ============================================================
+# Digest Command Node
+# ============================================================
+
+def digest_node(state: BotState) -> BotState:
+    from services.reminder_service import (
+        schedule_daily_digest, cancel_daily_digest, schedule_digest_demo,
+    )
+    raw = state.get("raw_input", "").lower()
+    channel_id = state.get("channel_id", "")
+
+    if "unsubscribe" in raw or "cancel" in raw:
+        ok = cancel_daily_digest(channel_id)
+        state["response_message"] = (
+            "Daily digest cancelled." if ok
+            else "No digest was subscribed for this channel."
+        )
+    elif "demo" in raw:
+        schedule_digest_demo(channel_id, delay_minutes=2)
+        state["response_message"] = "Demo digest scheduled — posting in ~2 minutes."
+    elif "subscribe" in raw:
+        schedule_daily_digest(channel_id)
+        state["response_message"] = (
+            "Daily digest subscribed — posts at 9:00 UTC in this channel."
+        )
+    else:
+        state["response_message"] = (
+            "Usage: `/sab digest subscribe`, `digest unsubscribe`, or `digest demo`"
+        )
+    return state
+
+
+# ============================================================
+# Duplicate Check Node
+# ============================================================
+
+def duplicate_check_node(state: BotState) -> BotState:
+    raw = state.get("raw_input", "")
+    repo = extract_repo_from_text(raw)
+    title_match = re.search(r'"([^"]+)"', raw) or re.search(r"'([^']+)'", raw)
+
+    if not repo or not title_match:
+        state["response_message"] = (
+            "Usage: `/sab duplicate owner/repo \"issue title to check\"`"
+        )
+        return state
+
+    matches = find_similar_issues(repo, title_match.group(1))
+    if not matches:
+        state["response_message"] = f"No likely duplicates found in `{repo}`."
+        return state
+
+    lines = [f"*Possible duplicates in {repo}:*"]
+    for m in matches:
+        pct = int(m["score"] * 100)
+        lines.append(f"• {pct}% — \"{m['title']}\" <{m['url']}|#{m['number']}>")
+    state["response_message"] = "\n".join(lines)
+    return state
+
+
+# ============================================================
+# Release Notes Node
+# ============================================================
+
+def release_notes_node(state: BotState) -> BotState:
+    from services.release_service import generate_release_notes
+
+    repo = extract_repo_from_text(state.get("raw_input", ""))
+    if not repo:
+        state["response_message"] = "Usage: `/sab release notes owner/repo`"
+        return state
+
+    state["response_message"] = generate_release_notes(repo)
+    return state
+
+
+# ============================================================
+# Real-Time Search Node
+# ============================================================
+
+def search_node(state: BotState) -> BotState:
+    from services.slack_search_service import search_slack_context, summarize_search_results
+
+    query = state.get("search_query", "").strip()
+    if not query:
+        state["response_message"] = (
+            "Usage:\n"
+            "• `@bot find discussions about deployment`\n"
+            "• `/sab search deployment planning`\n\n"
+            "_Note: Real-time search works best via @mention (requires `search:read` scope)._"
+        )
+        return state
+
+    action_token = state.get("action_token", "")
+    result = search_slack_context(action_token, query)
+
+    if result.get("error"):
+        state["response_message"] = result["error"]
+        return state
+
+    state["response_message"] = summarize_search_results(query, result.get("messages", []))
     return state

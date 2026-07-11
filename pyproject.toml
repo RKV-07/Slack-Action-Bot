@@ -30,3 +30,6 @@ build-backend = "hatchling.build"
 dev = [
     "pytest>=9.1.1",
 ]
+optional = [
+    "semgrep>=1.0.0",
+]

@@ -86,22 +86,29 @@ class TestE2EHelp:
 # ══════════════════════════════════════════════════════════════════
 
 class TestE2ETestLLM:
-    @patch("services.llm_service._chat_completion", return_value="LLM is working!")
-    def test_test_llm(self, mock_llm):
+    @patch("services.llm_service.check_local_llm", return_value=True)
+    @patch("services.llm_service.check_gemini_llm", return_value=True)
+    @patch("services.mcp_client.mcp_client.health_check", return_value=True)
+    def test_test_llm(self, mock_mcp, mock_gemini, mock_local):
         result = invoke("test")
         assert result["command_type"] == "test_llm"
-        assert "LLM is connected" in result["response_message"]
-        assert "LLM is working!" in result["response_message"]
+        assert "Local LLM" in result["response_message"]
+        assert "operational" in result["response_message"].lower()
 
-    @patch("services.llm_service._chat_completion", return_value="LLM is working!")
-    def test_test_llm_variant(self, mock_llm):
+    @patch("services.llm_service.check_local_llm", return_value=True)
+    @patch("services.llm_service.check_gemini_llm", return_value=True)
+    @patch("services.mcp_client.mcp_client.health_check", return_value=True)
+    def test_test_llm_variant(self, mock_mcp, mock_gemini, mock_local):
         result = invoke("test llm")
         assert result["command_type"] == "test_llm"
 
-    @patch("services.llm_service._chat_completion", return_value="")
-    def test_test_llm_failure(self, mock_llm):
+    @patch("services.llm_service.check_local_llm", return_value=False)
+    @patch("services.llm_service.check_gemini_llm", return_value=False)
+    @patch("services.mcp_client.mcp_client.health_check", return_value=False)
+    def test_test_llm_failure(self, mock_mcp, mock_gemini, mock_local):
         result = invoke("test")
-        assert "failed" in result["response_message"].lower()
+        assert "✗" in result["response_message"]
+        assert "hint" in result["response_message"].lower()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -421,6 +428,51 @@ class TestE2EEdgeCases:
         result = invoke("codereview blah")
         assert "Could not parse" in result["response_message"]
         mock_fetch.assert_not_called()
+
+
+# ══════════════════════════════════════════════════════════════════
+# NEW FEATURES (v2.1)
+# ══════════════════════════════════════════════════════════════════
+
+class TestE2EDigest:
+    @patch("services.reminder_service.schedule_daily_digest")
+    def test_digest_subscribe(self, mock_schedule):
+        result = invoke("digest subscribe")
+        assert result["command_type"] == "digest"
+        mock_schedule.assert_called_once()
+
+    @patch("services.reminder_service.cancel_daily_digest", return_value=True)
+    def test_digest_unsubscribe(self, mock_cancel):
+        result = invoke("digest unsubscribe")
+        assert result["command_type"] == "digest"
+        assert "cancelled" in result["response_message"].lower()
+
+
+class TestE2EDuplicate:
+    @patch("graph.nodes.find_similar_issues")
+    def test_duplicate_found(self, mock_find):
+        mock_find.return_value = [
+            {"score": 0.87, "title": "Fix login", "url": "http://1", "number": 42},
+        ]
+        result = invoke('duplicate owner/repo "fix login bug"')
+        assert result["command_type"] == "duplicate"
+        assert "87%" in result["response_message"]
+
+    def test_duplicate_no_ref(self):
+        result = invoke("duplicate")
+        assert "Usage" in result["response_message"]
+
+
+class TestE2EReleaseNotes:
+    @patch("services.release_service.generate_release_notes", return_value="## Features\n- New thing")
+    def test_release_notes(self, mock_gen):
+        result = invoke("release notes owner/repo")
+        assert result["command_type"] == "release_notes"
+        assert "Features" in result["response_message"]
+
+    def test_release_notes_no_repo(self):
+        result = invoke("release notes")
+        assert "Usage" in result["response_message"]
 
 
 # ══════════════════════════════════════════════════════════════════

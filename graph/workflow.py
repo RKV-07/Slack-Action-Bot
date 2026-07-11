@@ -27,6 +27,10 @@ from .nodes import (
     codereview_best_practices,
     codereview_merge,
     codereview_response,
+    digest_node,
+    duplicate_check_node,
+    release_notes_node,
+    search_node,
 )
 
 
@@ -45,6 +49,9 @@ def route_after_classification(state: BotState) -> str:
         "test_llm": "test_llm",
         "learn": "learn_research",
         "codereview": "codereview_fetch",
+        "digest": "digest",
+        "duplicate": "duplicate_check",
+        "release_notes": "release_notes",
     }
     return routes.get(cmd, "help_response")
 
@@ -89,6 +96,12 @@ def build_graph() -> CompiledStateGraph:
     g.add_node("codereview_merge", codereview_merge)
     g.add_node("codereview_response", codereview_response)
 
+    # New feature nodes
+    g.add_node("digest", digest_node)
+    g.add_node("duplicate_check", duplicate_check_node)
+    g.add_node("release_notes", release_notes_node)
+    g.add_node("search", search_node)
+
     g.set_entry_point("classify")
 
     g.add_conditional_edges("classify", route_after_classification, {
@@ -104,6 +117,10 @@ def build_graph() -> CompiledStateGraph:
         "test_llm": "test_llm",
         "learn_research": "learn_research",
         "codereview_fetch": "codereview_fetch",
+        "digest": "digest",
+        "duplicate_check": "duplicate_check",
+        "release_notes": "release_notes",
+        "search": "search",
     })
 
     g.add_edge("parse_reminder", "schedule_reminder")
@@ -134,6 +151,12 @@ def build_graph() -> CompiledStateGraph:
     g.add_edge("codereview_best_practices", "codereview_merge")
     g.add_edge("codereview_merge", "codereview_response")
     g.add_edge("codereview_response", END)
+
+    # New feature flows
+    g.add_edge("digest", END)
+    g.add_edge("duplicate_check", END)
+    g.add_edge("release_notes", END)
+    g.add_edge("search", END)
 
     return g.compile()
 
