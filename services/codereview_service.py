@@ -18,8 +18,7 @@ from services.llm_service import _chat_completion
 from config import GITHUB_TOKEN
 
 
-_last_fetch_via_mcp = False
-_last_semgrep_findings: list[dict] = []
+
 
 
 def parse_review_ref(raw_input: str) -> Optional[dict]:
@@ -46,8 +45,6 @@ def parse_review_ref(raw_input: str) -> Optional[dict]:
 
 def _github_get_pr(repo: str, pr_number: int) -> dict:
     """Fetch PR via MCP or direct API."""
-    global _last_fetch_via_mcp
-
     owner, repo_name = repo.split("/") if "/" in repo else ("", repo)
 
     # Try MCP first
@@ -58,22 +55,25 @@ def _github_get_pr(repo: str, pr_number: int) -> dict:
                 "owner": owner, "repo": repo_name, "pull_number": pr_number
             })
             if result and not result.startswith("Error"):
-                _last_fetch_via_mcp = True
                 pr_data = json.loads(result) if isinstance(result, str) else result
                 if isinstance(pr_data, dict) and pr_data.get("title"):
-                    return {
-                        "title": pr_data.get("title", ""),
-                        "body": (pr_data.get("body") or "")[:2000],
-                        "state": pr_data.get("state", ""),
-                        "diff_url": pr_data.get("diff_url", ""),
-                        "files": pr_data.get("files", []),
-                    }
+                    files = pr_data.get("files", [])
+                    # If MCP returned no file diffs, fall through to direct API
+                    if files:
+                        return {
+                            "title": pr_data.get("title", ""),
+                            "body": (pr_data.get("body") or "")[:2000],
+                            "state": pr_data.get("state", ""),
+                            "diff_url": pr_data.get("diff_url", ""),
+                            "files": files,
+                            "via_mcp": True,
+                        }
+                    print(f"[CodeReview] MCP returned no files for {repo}#{pr_number}, falling back to direct API")
     except Exception as e:
         print(f"[CodeReview] MCP fetch failed: {e}")
         traceback.print_exc()
 
     # Fallback: direct API (GET /pulls + GET /pulls/files for patch text)
-    _last_fetch_via_mcp = False
     if GITHUB_TOKEN:
         try:
             headers = {"Authorization": f"token {GITHUB_TOKEN}"}
@@ -86,7 +86,7 @@ def _github_get_pr(repo: str, pr_number: int) -> dict:
                 pr_data = resp.json()
                 if not pr_data or not isinstance(pr_data, dict):
                     print(f"[CodeReview] GitHub API returned unexpected body for {repo}#{pr_number}: {str(pr_data)[:200]}")
-                    return {"title": "Unknown PR", "body": "", "state": "unknown", "files": []}
+                    return {"title": "Unknown PR", "body": "", "state": "unknown", "files": [], "via_mcp": False}
                 files = pr_data.get("files", [])
 
                 # Also fetch files endpoint to get patch/diff text
@@ -106,6 +106,7 @@ def _github_get_pr(repo: str, pr_number: int) -> dict:
                     "state": pr_data.get("state", ""),
                     "diff_url": pr_data.get("diff_url", ""),
                     "files": files,
+                    "via_mcp": False,
                 }
             else:
                 print(f"[CodeReview] GitHub API returned status {resp.status_code} for {repo}#{pr_number}")
@@ -113,7 +114,7 @@ def _github_get_pr(repo: str, pr_number: int) -> dict:
             print(f"[CodeReview] Direct API failed: {e}")
             traceback.print_exc()
 
-    return {"title": "Unknown PR", "body": "", "state": "unknown", "files": []}
+    return {"title": "Unknown PR", "body": "", "state": "unknown", "files": [], "via_mcp": False}
 
 
 def fetch_pr_diff(repo: str, pr_number: int) -> dict:
@@ -175,18 +176,19 @@ def _run_semgrep(pr_data: dict) -> list[dict]:
     return findings
 
 
-def review_security(pr_data: dict) -> str:
+def review_security(pr_data: dict, semgrep_findings: list[dict] = None) -> str:
     """Security Reviewer subagent — grounded with Semgrep findings."""
     files_text = "\n".join([
         f"- {f.get('filename', 'unknown')}: +{f.get('additions', 0)}/-{f.get('deletions', 0)}"
-        + (f"\n```diff\n{f['patch'][:1500]}\n```" if f.get("patch") else "")
-        for f in pr_data.get("files", [])[:10]
+        + (f"\n```diff\n{f['patch'][:300]}\n```" if f.get("patch") else "")
+        for f in pr_data.get("files", [])[:5]
     ]) or "No file details available"
+    # Hard cap to stay within Qwen3 context window per slot
+    files_text = files_text[:3000]
 
     # Run Semgrep for real static analysis findings
-    semgrep_findings = _run_semgrep(pr_data)
-    global _last_semgrep_findings
-    _last_semgrep_findings = semgrep_findings
+    if semgrep_findings is None:
+        semgrep_findings = _run_semgrep(pr_data)
     semgrep_section = ""
     if semgrep_findings:
         semgrep_section = "\nSemgrep static analysis findings:\n" + "\n".join(
@@ -229,9 +231,10 @@ def review_performance(pr_data: dict) -> str:
     """Performance Reviewer subagent."""
     files_text = "\n".join([
         f"- {f.get('filename', 'unknown')}: +{f.get('additions', 0)}/-{f.get('deletions', 0)}"
-        + (f"\n```diff\n{f['patch'][:1500]}\n```" if f.get("patch") else "")
-        for f in pr_data.get("files", [])[:10]
+        + (f"\n```diff\n{f['patch'][:300]}\n```" if f.get("patch") else "")
+        for f in pr_data.get("files", [])[:5]
     ]) or "No file details available"
+    files_text = files_text[:3000]
 
     prompt = (
         f"Review this PR for PERFORMANCE issues:\n\n"
@@ -264,9 +267,10 @@ def review_best_practices(pr_data: dict) -> str:
     """Best Practices Reviewer subagent."""
     files_text = "\n".join([
         f"- {f.get('filename', 'unknown')}: +{f.get('additions', 0)}/-{f.get('deletions', 0)}"
-        + (f"\n```diff\n{f['patch'][:1500]}\n```" if f.get("patch") else "")
-        for f in pr_data.get("files", [])[:10]
+        + (f"\n```diff\n{f['patch'][:300]}\n```" if f.get("patch") else "")
+        for f in pr_data.get("files", [])[:5]
     ]) or "No file details available"
+    files_text = files_text[:3000]
 
     prompt = (
         f"Review this PR for BEST PRACTICES:\n\n"
@@ -296,22 +300,26 @@ def review_best_practices(pr_data: dict) -> str:
     return result or "Best practices review completed - code looks good."
 
 
-def _risk_score(security_text: str) -> str:
+def _risk_score(security_text: str, semgrep_findings: list[dict] = None) -> str:
     """Compute a simple risk score from semgrep findings and security review text."""
-    high = sum(1 for f in _last_semgrep_findings if f.get("severity") == "ERROR")
-    if high > 0 or "high" in security_text.lower()[:200]:
+    if semgrep_findings is None:
+        semgrep_findings = []
+    high = sum(1 for f in semgrep_findings if f.get("severity") == "ERROR")
+    text_lower = security_text.lower()
+    if high > 0 or re.search(r'risk level.{0,20}high', text_lower):
         return "🔴 High"
-    if _last_semgrep_findings or "medium" in security_text.lower()[:200]:
+    if semgrep_findings or re.search(r'risk level.{0,20}medium', text_lower):
         return "🟡 Medium"
     return "🟢 Low"
 
 
-def merge_reviews(security: str, performance: str, best_practices: str, pr_data: dict) -> str:
+def merge_reviews(security: str, performance: str, best_practices: str, pr_data: dict,
+                   via_mcp: bool = False, semgrep_findings: list[dict] = None) -> str:
     """Merge all three review outputs into a formatted response."""
     pr_title = pr_data.get("title", "Unknown PR")
 
-    source_note = "_via GitHub MCP_" if _last_fetch_via_mcp else "_via GitHub REST API (fallback)_"
-    risk = _risk_score(security)
+    source_note = "via GitHub MCP" if via_mcp else "via GitHub REST API (fallback)"
+    risk = _risk_score(security, semgrep_findings)
 
     sections = [
         f"**Code Review: {pr_title}**\n",

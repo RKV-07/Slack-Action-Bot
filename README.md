@@ -99,10 +99,10 @@ Slack-Action-Bot/
 ├── services/
 │   ├── llm_service.py           # Local LLM calls, PERSONA, summarize
 │   ├── github_service.py        # GitHub API, TTL cache, rate-limit tracking
-│   ├── codereview_service.py    # 3-subagent review, Semgrep
+│   ├── codereview_service.py    # 3-subagent review, Semgrep, risk score
 │   ├── learn_service.py         # 3-agent learning path, Tavily search
 │   ├── reminder_service.py      # SQLite-backed APScheduler
-│  ├── mcp_client.py            # MCP AsyncExitStack, background loop, _evict_session()
+│   ├── mcp_client.py            # MCP AsyncExitStack, background loop, _evict_session()
 │   ├── mcp_slack_server.py      # Custom Slack MCP server (stdio)
 │   ├── slack_summarize_service.py # MCP-first channel summary
 │   └── slack_features.py        # Processing reaction decorator

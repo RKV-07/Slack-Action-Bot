@@ -28,6 +28,8 @@ def md_to_slack_mrkdwn(text: str) -> str:
     text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)      # **bold** -> *bold*
     text = re.sub(r'__(.+?)__', r'*\1*', text)           # __bold__ -> *bold*
     text = re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'<\2|\1>', text)  # [t](url) -> <url|t>
+    # bare URLs (not already inside <...>) -> <url>
+    text = re.sub(r'(?<!<)(https?://[^\s<>]+)', r'<\1>', text)
     return text
 
 
@@ -187,4 +189,7 @@ def build_initial_state(
         "review_security": "",
         "review_performance": "",
         "review_best_practices": "",
+        "review_warning": "",
+        "review_via_mcp": False,
+        "review_semgrep_findings": [],
     }

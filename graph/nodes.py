@@ -311,10 +311,13 @@ def reminder_list_node(state: BotState) -> BotState:
 def reminder_cancel_node(state: BotState) -> BotState:
     """Cancel a pending reminder by ID."""
     raw = state.get("raw_input", "")
-    # Extract job ID from the message
-    match = re.search(r'(?:cancel|delete|remove)\s+(\S+)', raw, re.IGNORECASE)
+    # Extract job ID from the message — capture alphanumeric + underscores, strip stray characters
+    match = re.search(r'(?:cancel|delete|remove)\s+([a-zA-Z0-9_<>`]+)', raw, re.IGNORECASE)
     if match:
-        job_id = match.group(1)
+        job_id = match.group(1).strip('`<>')
+        # Accept short suffix (e.g., "abc123") and auto-prefix
+        if not job_id.startswith("reminder_"):
+            job_id = f"reminder_{job_id}"
         if cancel_reminder(job_id):
             state["response_message"] = f"Reminder `{job_id}` cancelled."
         else:
@@ -579,6 +582,14 @@ def codereview_fetch(state: BotState) -> BotState:
         )
         return state
 
+    if not pr_data.get("files"):
+        state["review_warning"] = (
+            f"Fetched PR metadata for *{pr_data.get('title', 'Unknown')}* but no file diffs "
+            f"were available. Review will be based on title/description only — results may be limited."
+        )
+        # fall through, continue with shallow review
+
+    state["review_via_mcp"] = pr_data.get("via_mcp", False)
     state["review_pr_data"] = pr_data
     return state
 
@@ -587,7 +598,10 @@ def codereview_security(state: BotState) -> dict:
     """Security reviewer subagent."""
     pr_data = state.get("review_pr_data", {})
     print(f"[CodeReview] Security review for: {pr_data.get('title', 'Unknown')}")
-    return {"review_security": review_security(pr_data)}
+    from services.codereview_service import _run_semgrep
+    semgrep_findings = _run_semgrep(pr_data)
+    result = review_security(pr_data, semgrep_findings)
+    return {"review_security": result, "review_semgrep_findings": semgrep_findings}
 
 
 def codereview_performance(state: BotState) -> dict:
@@ -610,9 +624,15 @@ def codereview_merge(state: BotState) -> BotState:
     performance = state.get("review_performance", "")
     best_practices = state.get("review_best_practices", "")
     pr_data = state.get("review_pr_data", {})
+    warning = state.get("review_warning", "")
+    via_mcp = state.get("review_via_mcp", False)
+    semgrep_findings = state.get("review_semgrep_findings", [])
 
     print("[CodeReview] Merging reviews")
-    merged = merge_reviews(security, performance, best_practices, pr_data)
+    merged = merge_reviews(security, performance, best_practices, pr_data,
+                           via_mcp=via_mcp, semgrep_findings=semgrep_findings)
+    if warning:
+        merged = f"{warning}\n\n{merged}"
     state["response_message"] = merged
     return state
 

@@ -107,8 +107,10 @@ A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local 
 | `difflib` fuzzy matching | Typo tolerance without new dependencies |
 | SQLite jobstore | Reminders survive bot restarts |
 | `cachetools.TTLCache` | 2-min cache prevents redundant GitHub API calls |
-| Semgrep in security reviewer | Real static analysis grounded in actual code findings |
+| Semgrep in security reviewer | Real static analysis grounded in actual code findings (installed in uv) |
 | PR risk score | One-line risk indicator (🔴/🟡/🟢) from Semgrep + LLM |
+| Prompt truncation | Reviewer prompts capped at 3000 chars to fit Qwen3 context per slot |
+| MCP file fallback | When MCP returns no files, falls through to direct API for diffs |
 | Tavily in learn service | Real URLs instead of LLM-invented links |
 | MCP source-transparency footer | Visible proof of MCP usage in every review/resource output |
 | `_call_with_backoff()` | Rate-limit resilience for Slack API calls |
@@ -194,4 +196,5 @@ All MCP servers initialize in a background daemon thread at startup. The bot boo
 | `anyio` | Async runtime for MCP |
 | `cachetools` | TTL cache for GitHub repos |
 | `dateparser` | Natural language time parsing |
+| `semgrep` | Static analysis for security code reviews |
 | `python-dotenv` | Environment variable loading |

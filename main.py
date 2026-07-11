@@ -5,6 +5,7 @@ from collections import OrderedDict
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from config import SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET, GITHUB_TOKEN, MCP_GITHUB_ENABLED, MCP_FETCH_ENABLED, MCP_SLACK_ENABLED
+from slack_sdk.errors import SlackApiError
 from handlers.commands import handle_sab_command
 from handlers.events import handle_message_event, handle_app_mention
 from services.reminder_service import shutdown_scheduler
@@ -59,19 +60,31 @@ def cmd_sab(ack, command, client, logger):
     ack()
     if _already_processed(command.get("trigger_id", "")):
         return
+    channel_id = command["channel_id"]
+    user_id = command["user_id"]
+    thread_ts = command.get("thread_ts")
+    response = None
     try:
         response = handle_sab_command(command, client)
         client.chat_postMessage(
-            channel=command["channel_id"],
+            channel=channel_id,
             text=response,
-            thread_ts=command.get("thread_ts"),
+            thread_ts=thread_ts,
         )
+    except SlackApiError as e:
+        if e.response.get("error") == "not_in_channel":
+            logger.warning(f"Bot not in channel {channel_id}, sending DM to {user_id}")
+            try:
+                client.chat_postMessage(
+                    channel=user_id,
+                    text=f"I'm not in that channel yet. Here's your response:\n\n{response or 'Processing your request...'}",
+                )
+            except Exception:
+                pass
+        else:
+            logger.error(f"Error handling /sab: {e}")
     except Exception as e:
         logger.error(f"Error handling /sab: {e}")
-        client.chat_postMessage(
-            channel=command["channel_id"],
-            text="Something went wrong. Please try again.",
-        )
 
 
 @app.event("message")

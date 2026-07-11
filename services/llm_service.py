@@ -75,7 +75,7 @@ def _chat_completion(user_msg: str, max_tokens: int = 500, system_msg: str = Non
             # Robust fallback logic to extract text cleanly regardless of backend configuration
             final = content if content else reasoning
             return final.strip() if final else ""
-        print(f"[LLM] API error: HTTP {resp.status_code}")
+        print(f"[LLM] API error: HTTP {resp.status_code} - {resp.text[:300]}")
         return ""
     except Exception as e:
         print(f"[LLM] Error: {type(e).__name__}: {e}")

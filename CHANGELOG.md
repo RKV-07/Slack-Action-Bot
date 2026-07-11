@@ -13,8 +13,10 @@
 
 #### Code Review (`/sab codereview`)
 - 3-subagent fan-out: Security, Performance, Best Practices
-- Semgrep grounding for real static analysis in security reviews
+- Semgrep grounding for real static analysis in security reviews (installed in uv)
 - PR risk score (🔴/🟡/🟢) from Semgrep findings + LLM analysis
+- Prompt truncation (3000 char cap) to fit Qwen3 context window per slot
+- MCP fallback: when MCP returns no files, falls through to direct API
 - `parse_review_ref` handles `owner/repo#N`, PR URLs, and bare repos
 - Actionable error for bare repo URLs without PR number
 - MCP source-transparency footer on every review
@@ -82,6 +84,8 @@
 - `on_message`/`app_mention` handlers missing `event_ts` dedup → keyed on `event_ts`
 - Bot sent broken Markdown to Slack (`**bold**`, `[text](url)`) → `md_to_slack_mrkdwn()` conversion
 - `conversations_history`/`conversations_replies` had no rate-limit retry → `_call_with_backoff()`
+- `not_in_channel` crash on /sab → catches SlackApiError, DMs user as fallback
+- Reviewer prompts too large for Qwen3 context → truncated to 3000 chars
 
 #### Minor
 - BotState `command_type` Literal missing `reminder_list`/`reminder_cancel`

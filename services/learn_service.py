@@ -12,9 +12,6 @@ from services.llm_service import _chat_completion
 from config import GITHUB_TOKEN, TAVILY_API_KEY
 
 
-_last_search_via_mcp = False
-
-
 def _tavily_search(query: str, count: int = 5) -> list:
     """Search the web via Tavily API for real, verified results."""
     if not TAVILY_API_KEY:
@@ -35,9 +32,8 @@ def _tavily_search(query: str, count: int = 5) -> list:
     return []
 
 
-def _github_search_repos(query: str, count: int = 3) -> list:
+def _github_search_repos(query: str, count: int = 3) -> dict:
     """Search GitHub repos via MCP or direct API."""
-    global _last_search_via_mcp
     # Try MCP first
     try:
         from services.mcp_client import mcp_client
@@ -46,10 +42,9 @@ def _github_search_repos(query: str, count: int = 3) -> list:
                 "query": query, "sort": "stars", "per_page": count
             })
             if result and not result.startswith("Error"):
-                _last_search_via_mcp = True
                 data = json.loads(result) if isinstance(result, str) else result
                 if isinstance(data, dict) and "items" in data:
-                    return [
+                    return {"via_mcp": True, "repos": [
                         {
                             "type": "repository",
                             "title": r.get("full_name", ""),
@@ -58,12 +53,11 @@ def _github_search_repos(query: str, count: int = 3) -> list:
                             "stars": r.get("stargazers_count", 0),
                         }
                         for r in data["items"][:count]
-                    ]
+                    ]}
     except Exception as e:
         print(f"[Learn] MCP GitHub search failed: {e}")
 
     # Fallback: direct API
-    _last_search_via_mcp = False
     if GITHUB_TOKEN:
         try:
             headers = {"Authorization": f"token {GITHUB_TOKEN}"}
@@ -74,7 +68,7 @@ def _github_search_repos(query: str, count: int = 3) -> list:
                 timeout=10,
             )
             if resp.status_code == 200:
-                return [
+                return {"via_mcp": False, "repos": [
                     {
                         "type": "repository",
                         "title": r.get("full_name", ""),
@@ -83,16 +77,18 @@ def _github_search_repos(query: str, count: int = 3) -> list:
                         "stars": r.get("stargazers_count", 0),
                     }
                     for r in resp.json().get("items", [])[:count]
-                ]
+                ]}
         except Exception as e:
             print(f"[Learn] Direct GitHub API failed: {e}")
 
-    return []
+    return {"via_mcp": False, "repos": []}
 
 
 def research_topic(topic: str) -> dict:
     """Research agent: Gather resources and information about the topic."""
-    resources = _github_search_repos(f"{topic} tutorial")
+    gh_result = _github_search_repos(f"{topic} tutorial")
+    search_via_mcp = gh_result["via_mcp"]
+    resources = gh_result["repos"]
 
     # Tavily web search for real, verified URLs (prevents hallucinated links)
     web_results = _tavily_search(f"{topic} learning resources tutorial documentation", count=5)
@@ -128,7 +124,7 @@ def research_topic(topic: str) -> dict:
                 "content": llm_resources,
             })
 
-    return {"resources": resources}
+    return {"resources": resources, "search_via_mcp": search_via_mcp}
 
 
 def structure_learning_path(topic: str, resources: list) -> dict:
@@ -175,7 +171,7 @@ def structure_learning_path(topic: str, resources: list) -> dict:
     return path
 
 
-def curate_resources(topic: str, resources: list, path: dict) -> str:
+def curate_resources(topic: str, resources: list, path: dict, search_via_mcp: bool = False) -> str:
     """Resource agent: Finalize the learning path with curated resources."""
     resource_text = "\n".join([
         f"- [{r.get('title', 'Unknown')}]({r.get('url', '')})" if r.get("url")
@@ -206,7 +202,7 @@ def curate_resources(topic: str, resources: list, path: dict) -> str:
     ))
 
     if result:
-        source_note = "_via GitHub MCP_" if _last_search_via_mcp else "_via GitHub REST API (fallback)_"
+        source_note = "via GitHub MCP" if search_via_mcp else "via GitHub REST API (fallback)"
         return f"{result}\n\n_{source_note}_"
 
     return (

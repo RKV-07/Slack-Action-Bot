@@ -45,3 +45,6 @@ class BotState(TypedDict):
     review_security: str
     review_performance: str
     review_best_practices: str
+    review_warning: str
+    review_via_mcp: bool
+    review_semgrep_findings: list
