@@ -67,10 +67,11 @@ def fetch_thread_messages(client, channel_id: str, ts: str) -> tuple[str, list[d
         return "", []
 
 
-def fetch_channel_messages(client, channel_id: str, count: int = 6) -> list[dict]:
-    """Fetch the last N messages from a channel (not thread)."""
+def fetch_channel_messages(client, channel_id: str, count: int = 25) -> list[dict]:
+    """Fetch the last N human messages from a channel (not thread)."""
     try:
-        resp = client.conversations_history(channel=channel_id, limit=count + 10)
+        # Over-fetch heavily — bot messages and short msgs get filtered out
+        resp = client.conversations_history(channel=channel_id, limit=count + 40)
 
         # Check for API errors
         if not resp.get("ok"):
@@ -102,6 +103,8 @@ def fetch_channel_messages(client, channel_id: str, count: int = 6) -> list[dict
                 break
 
         print(f"[Shared] Fetched {len(result)} channel messages from {channel_id}")
+
+        result.reverse()  # normalize to oldest-first, matching fetch_thread_messages
         return result
     except Exception as e:
         print(f"[Shared] Error fetching channel messages: {e}")

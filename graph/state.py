@@ -21,7 +21,7 @@ class BotState(TypedDict):
     command_type: Literal[
         "context", "reminder", "github", "mention",
         "latest_github", "greeting", "test_llm", "help", "chat",
-        "learn", "codereview"
+        "learn", "codereview", "reminder_list", "reminder_cancel",
     ]
     action_context: Optional[ActionContext]
     reminder_data: Optional[ReminderData]

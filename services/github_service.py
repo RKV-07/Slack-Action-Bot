@@ -1,13 +1,29 @@
 import re
 import requests
 from typing import Optional
+from cachetools import TTLCache, cached
 from config import GITHUB_TOKEN
 
 _GITHUB_API = "https://api.github.com"
 
+# Rate limit state
+_rate_limit_remaining = None
+_rate_limit_reset = None
+
 
 def _headers() -> dict:
     return {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
+
+
+def _check_rate_limit(resp: requests.Response):
+    """Track GitHub rate limit state from response headers."""
+    global _rate_limit_remaining, _rate_limit_reset
+    remaining = resp.headers.get("X-RateLimit-Remaining")
+    if remaining is not None:
+        _rate_limit_remaining = int(remaining)
+    reset = resp.headers.get("X-RateLimit-Reset")
+    if reset is not None:
+        _rate_limit_reset = int(reset)
 
 
 def _strip_suffix(text: str, suffix: str) -> str:
@@ -55,8 +71,12 @@ def extract_repo_from_text(text: str) -> Optional[str]:
     return None
 
 
+_repo_cache = TTLCache(maxsize=1, ttl=120)
+
+
+@cached(_repo_cache)
 def fetch_all_repos() -> list[dict]:
-    """Fetch all repos the token has access to."""
+    """Fetch all repos the token has access to (cached 2 min)."""
     if not GITHUB_TOKEN:
         print("[GitHub] GITHUB_TOKEN not set")
         return []
@@ -68,6 +88,7 @@ def fetch_all_repos() -> list[dict]:
         params = {"per_page": 100, "page": page, "sort": "updated"}
         try:
             resp = requests.get(url, headers=_headers(), params=params, timeout=10)
+            _check_rate_limit(resp)
             if resp.status_code == 200:
                 items = resp.json()
                 if not items:
@@ -81,6 +102,8 @@ def fetch_all_repos() -> list[dict]:
                 page += 1
             else:
                 print(f"[GitHub] Failed to fetch repos: HTTP {resp.status_code}")
+                if resp.status_code == 403 and _rate_limit_remaining == 0:
+                    print(f"[GitHub] Rate limited. Resets at {_rate_limit_reset}")
                 break
         except requests.RequestException as e:
             print(f"[GitHub] Error fetching repos: {e}")
@@ -96,6 +119,7 @@ def fetch_github_issue(repo: str, issue_number: int) -> Optional[dict]:
     url = f"{_GITHUB_API}/repos/{repo}/issues/{issue_number}"
     try:
         resp = requests.get(url, headers=_headers(), timeout=10)
+        _check_rate_limit(resp)
         if resp.status_code == 200:
             data = resp.json()
             if not data or not isinstance(data, dict):
@@ -132,6 +156,7 @@ def fetch_latest_issues(count: int = 5) -> list[dict]:
 
         try:
             resp = requests.get(url, headers=_headers(), params=params, timeout=10)
+            _check_rate_limit(resp)
             if resp.status_code == 200:
                 items = resp.json()
                 for item in items:
@@ -171,6 +196,7 @@ def fetch_latest_prs(count: int = 5) -> list[dict]:
 
         try:
             resp = requests.get(url, headers=_headers(), params=params, timeout=10)
+            _check_rate_limit(resp)
             if resp.status_code == 200:
                 prs = resp.json()
                 for pr in prs:
@@ -205,6 +231,7 @@ def fetch_repo_issues(repo: str, count: int = 5) -> list[dict]:
 
     try:
         resp = requests.get(url, headers=_headers(), params=params, timeout=10)
+        _check_rate_limit(resp)
         if resp.status_code == 200:
             items = resp.json()
             return [
@@ -237,6 +264,7 @@ def fetch_repo_prs(repo: str, count: int = 5) -> list[dict]:
 
     try:
         resp = requests.get(url, headers=_headers(), params=params, timeout=10)
+        _check_rate_limit(resp)
         if resp.status_code == 200:
             prs = resp.json()
             return [

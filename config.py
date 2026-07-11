@@ -11,6 +11,7 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 LLAMA_BASE_URL = os.environ.get("LLAMA_BASE_URL", "http://localhost:8080")
 LLAMA_PARALLEL = os.environ.get("LLAMA_PARALLEL")
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 
 # MCP Server Configuration (MCP primary, direct API as fallback)
 MCP_GITHUB_ENABLED = os.environ.get("MCP_GITHUB_ENABLED", "true").lower() == "true"

@@ -7,7 +7,7 @@ from services.github_service import (
     fetch_repo_issues, fetch_repo_prs,
     extract_repo_from_text,
 )
-from services.reminder_service import schedule_reminder
+from services.reminder_service import schedule_reminder, list_reminders, cancel_reminder
 from services.llm_service import generate_reply, summarize_thread_messages
 from services.learn_service import research_topic, structure_learning_path, curate_resources
 from services.codereview_service import (
@@ -77,6 +77,14 @@ def classify_intent(state: BotState) -> BotState:
     if re.search(r'\bsum+ar\w*\b|\bsum+ra\w*\b', raw_lower):
         state["command_type"] = "context"
         state["needs_llm"] = True
+        return state
+
+    # reminders list/cancel — must come before reminder to avoid regex overlap
+    if re.search(r'\breminders?\b', raw_lower):
+        if re.search(r'\b(cancel|delete|remove)\b', raw_lower):
+            state["command_type"] = "reminder_cancel"
+        else:
+            state["command_type"] = "reminder_list"
         return state
 
     # reminder: -r "task"@30m  OR  remind me to ...
@@ -285,6 +293,40 @@ def schedule_reminder_node(state: BotState) -> BotState:
     return state
 
 
+def reminder_list_node(state: BotState) -> BotState:
+    """List all pending reminders for the user."""
+    user_id = state.get("user_id", "")
+    reminders = list_reminders(user_id)
+    if reminders:
+        parts = ["*Your pending reminders:*\n"]
+        for r in reminders:
+            parts.append(f"• `{r['id']}` — {r['text']} (at {r['run_time']})")
+        parts.append("\nTo cancel: `/sab reminder cancel <id>`")
+        state["response_message"] = "\n".join(parts)
+    else:
+        state["response_message"] = "No pending reminders. Set one with `/sab -r \"task\" @30m`"
+    return state
+
+
+def reminder_cancel_node(state: BotState) -> BotState:
+    """Cancel a pending reminder by ID."""
+    raw = state.get("raw_input", "")
+    # Extract job ID from the message
+    match = re.search(r'(?:cancel|delete|remove)\s+(\S+)', raw, re.IGNORECASE)
+    if match:
+        job_id = match.group(1)
+        if cancel_reminder(job_id):
+            state["response_message"] = f"Reminder `{job_id}` cancelled."
+        else:
+            state["response_message"] = f"Could not find reminder `{job_id}`. Run `/sab reminders` to see pending ones."
+    else:
+        state["response_message"] = (
+            "Which reminder to cancel? Run `/sab reminders` to see IDs, then:\n"
+            "`/sab reminder cancel <id>`"
+        )
+    return state
+
+
 def summarize_action(state: BotState) -> BotState:
     if not state.get("needs_llm"):
         return state
@@ -315,9 +357,9 @@ def summarize_action(state: BotState) -> BotState:
         return state
 
     state["response_message"] = (
-        "No messages to summarize. I need `channels:history` permission "
-        "to read channel messages. Ask your Slack admin to add it in "
-        "the app settings under OAuth & Permissions."
+        "It looks like this channel's recent activity is mostly bot replies or commands — "
+        "I need some actual conversation to summarize. Try it in a thread with real back-and-forth, "
+        "or chat a bit first!"
     )
     return state
 
@@ -372,7 +414,9 @@ def build_help_response(state: BotState) -> BotState:
         "• Just say \"summarize\" or \"catch me up\" — same thing\n\n"
         "*⏰ Reminders*\n"
         "• `/sab -r \"task\" @30m` — reminder in 30 min (also `@2h` for hours)\n"
-        "• `/sab remind me to check the server tomorrow at 3pm` — natural language works too\n\n"
+        "• `/sab remind me to check the server tomorrow at 3pm` — natural language works too\n"
+        "• `/sab reminders` — list pending reminders\n"
+        "• `/sab reminder cancel <id>` — cancel a pending reminder\n\n"
         "*🔍 GitHub lookups*\n"
         "• Mention `owner/repo#123` — pulls up that issue or PR\n"
         "• Paste a GitHub PR/issue link directly — same result\n"

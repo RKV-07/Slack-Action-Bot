@@ -1,10 +1,12 @@
 import uuid
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from slack_sdk import WebClient
 from config import SLACK_BOT_TOKEN
 
-scheduler = BackgroundScheduler()
+jobstores = {"default": SQLAlchemyJobStore(url="sqlite:///reminders.db")}
+scheduler = BackgroundScheduler(jobstores=jobstores)
 _scheduler_started = False
 _client = None
 
@@ -37,7 +39,6 @@ def _send_reminder(user_id: str, text: str, channel_id: str):
 def schedule_reminder(user_id: str, text: str, delay_seconds: int, channel_id: str):
     _ensure_scheduler()
     run_date = datetime.now() + timedelta(seconds=delay_seconds)
-    # UUID-based job IDs prevent collision when same user schedules multiple reminders
     job_id = f"reminder_{uuid.uuid4().hex[:12]}"
     scheduler.add_job(
         _send_reminder,
@@ -47,6 +48,33 @@ def schedule_reminder(user_id: str, text: str, delay_seconds: int, channel_id: s
         id=job_id,
         replace_existing=False,
     )
+
+
+def list_reminders(user_id: str) -> list[dict]:
+    """List all pending reminders for a user."""
+    _ensure_scheduler()
+    jobs = []
+    for job in scheduler.get_jobs():
+        args = job.args or []
+        if len(args) >= 3 and args[0] == user_id:
+            run_time = job.next_run_time
+            if run_time:
+                jobs.append({
+                    "id": job.id,
+                    "text": args[1],
+                    "run_time": run_time.strftime("%Y-%m-%d %H:%M UTC"),
+                })
+    return jobs
+
+
+def cancel_reminder(job_id: str) -> bool:
+    """Cancel a pending reminder by job ID."""
+    _ensure_scheduler()
+    try:
+        scheduler.remove_job(job_id)
+        return True
+    except Exception:
+        return False
 
 
 def shutdown_scheduler():

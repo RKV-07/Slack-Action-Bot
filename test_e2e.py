@@ -162,6 +162,14 @@ class TestE2EReminder:
         assert result["command_type"] == "reminder"
         assert "Reminder set" in result["response_message"]
 
+    def test_reminders_list(self):
+        result = invoke('reminders')
+        assert result["command_type"] == "reminder_list"
+
+    def test_reminder_cancel(self):
+        result = invoke('reminder cancel reminder_abc123')
+        assert result["command_type"] == "reminder_cancel"
+
 
 # ══════════════════════════════════════════════════════════════════
 # GITHUB REF

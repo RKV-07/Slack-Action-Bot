@@ -1,5 +1,6 @@
 import concurrent.futures
 import re
+from config import SLACK_SUMMARY_MAX_MESSAGES
 from graph.workflow import sab_graph
 from handlers.shared import fetch_thread_messages, fetch_channel_messages, build_initial_state
 
@@ -47,7 +48,7 @@ def handle_sab_command(command: dict, client) -> str:
     # If no thread messages and command looks like summarize, fetch channel context
     raw_lower = (text or "").lower().strip()
     if not thread_messages and re.search(r'\bsum+ar\w*\b|\bsum+ra\w*\b', raw_lower):
-        thread_messages = fetch_channel_messages(client, channel_id, count=6)
+        thread_messages = fetch_channel_messages(client, channel_id, count=SLACK_SUMMARY_MAX_MESSAGES)
 
     state = build_initial_state(
         user_id=user_id,

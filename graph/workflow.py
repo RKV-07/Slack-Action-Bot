@@ -8,6 +8,8 @@ from .nodes import (
     fetch_latest_github_items,
     parse_reminder,
     schedule_reminder_node,
+    reminder_list_node,
+    reminder_cancel_node,
     summarize_action,
     build_context_response,
     build_github_response,
@@ -32,6 +34,8 @@ def route_after_classification(state: BotState) -> str:
     cmd = state.get("command_type", "help")
     routes = {
         "reminder": "parse_reminder",
+        "reminder_list": "reminder_list",
+        "reminder_cancel": "reminder_cancel",
         "github": "extract_github",
         "latest_github": "fetch_latest",
         "context": "summarize",
@@ -61,6 +65,8 @@ def build_graph() -> CompiledStateGraph:
     g.add_node("fetch_latest", fetch_latest_github_items)
     g.add_node("parse_reminder", parse_reminder)
     g.add_node("schedule_reminder", schedule_reminder_node)
+    g.add_node("reminder_list", reminder_list_node)
+    g.add_node("reminder_cancel", reminder_cancel_node)
     g.add_node("summarize", summarize_action)
     g.add_node("context_response", build_context_response)
     g.add_node("github_response", build_github_response)
@@ -87,6 +93,8 @@ def build_graph() -> CompiledStateGraph:
 
     g.add_conditional_edges("classify", route_after_classification, {
         "parse_reminder": "parse_reminder",
+        "reminder_list": "reminder_list",
+        "reminder_cancel": "reminder_cancel",
         "extract_github": "extract_github",
         "fetch_latest": "fetch_latest",
         "summarize": "summarize",
@@ -100,6 +108,8 @@ def build_graph() -> CompiledStateGraph:
 
     g.add_edge("parse_reminder", "schedule_reminder")
     g.add_edge("schedule_reminder", END)
+    g.add_edge("reminder_list", END)
+    g.add_edge("reminder_cancel", END)
     g.add_edge("extract_github", "fetch_github")
     g.add_edge("fetch_github", "github_response")
     g.add_edge("github_response", END)

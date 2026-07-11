@@ -281,6 +281,73 @@ class TestParseReviewRef:
         assert ref["pr_number"] is None
 
 
+class TestSemgrep:
+    def test_semgrep_graceful_skip(self):
+        from services.codereview_service import _run_semgrep
+        findings = _run_semgrep({"files": []})
+        assert findings == []
+
+
+class TestReminderPersistence:
+    def test_scheduler_has_sqlalchemy_jobstore(self):
+        from services.reminder_service import scheduler
+        assert "default" in scheduler._jobstores
+
+    def test_list_reminders_empty(self):
+        from services.reminder_service import list_reminders
+        result = list_reminders("U_nonexistent")
+        assert isinstance(result, list)
+
+    def test_cancel_nonexistent_returns_false(self):
+        from services.reminder_service import cancel_reminder
+        result = cancel_reminder("reminder_nonexistent")
+        assert result is False
+
+
+class TestGitHubRateLimit:
+    def test_check_rate_limit(self):
+        from services.github_service import _check_rate_limit, _rate_limit_remaining
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.headers = {"X-RateLimit-Remaining": "4999", "X-RateLimit-Reset": "1234567890"}
+        _check_rate_limit(resp)
+        from services.github_service import _rate_limit_remaining as remaining
+        assert remaining == 4999
+
+
+class TestTavilySearch:
+    @patch("services.learn_service.TAVILY_API_KEY", "test-key")
+    @patch("services.learn_service.requests.post")
+    def test_tavily_returns_results(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": [
+                {"title": "Python Tutorial", "url": "https://example.com", "content": "Learn Python"}
+            ]
+        }
+        mock_post.return_value = mock_resp
+        from services.learn_service import _tavily_search
+        results = _tavily_search("python tutorial")
+        assert len(results) == 1
+        assert results[0]["title"] == "Python Tutorial"
+        assert results[0]["type"] == "web"
+
+    @patch("services.learn_service.TAVILY_API_KEY", "test-key")
+    @patch("services.learn_service.requests.post")
+    def test_tavily_graceful_failure(self, mock_post):
+        mock_post.side_effect = Exception("timeout")
+        from services.learn_service import _tavily_search
+        results = _tavily_search("python tutorial")
+        assert results == []
+
+    @patch("services.learn_service.TAVILY_API_KEY", None)
+    def test_tavily_no_key_returns_empty(self):
+        from services.learn_service import _tavily_search
+        results = _tavily_search("python tutorial")
+        assert results == []
+
+
 class TestGithubGetPr:
     @patch("services.codereview_service.requests.get")
     def test_direct_api_success(self, mock_get):

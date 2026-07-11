@@ -3,10 +3,14 @@ Code Review Service - Multi-agent code review with 3 subagents.
 
 Fans out to Security, Performance, and Best Practices reviewers.
 Uses MCP GitHub (primary) or direct API (fallback) to fetch PR diffs.
+Security reviewer uses Semgrep for real static analysis grounding.
 """
 
 import json
+import os
 import re
+import subprocess
+import tempfile
 import traceback
 from typing import Optional
 import requests
@@ -109,19 +113,85 @@ def fetch_pr_diff(repo: str, pr_number: int) -> dict:
     return _github_get_pr(repo, pr_number)
 
 
+def _run_semgrep(pr_data: dict) -> list[dict]:
+    """Run Semgrep on PR diff files for real static analysis findings."""
+    files = pr_data.get("files", [])
+    if not files:
+        return []
+
+    findings = []
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Write patch files to temp dir for semgrep
+            for f in files[:20]:
+                patch = f.get("patch", "")
+                filename = f.get("filename", "unknown")
+                if not patch:
+                    continue
+                # Write the patched version
+                filepath = os.path.join(tmp_dir, filename)
+                os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                # Extract added lines from patch for basic analysis
+                added_lines = []
+                for line in patch.split("\n"):
+                    if line.startswith("+") and not line.startswith("+++"):
+                        added_lines.append(line[1:])
+                if added_lines:
+                    with open(filepath, "w") as fh:
+                        fh.write("\n".join(added_lines))
+
+            if not os.listdir(tmp_dir):
+                return []
+
+            result = subprocess.run(
+                ["semgrep", "--config=auto", "--json", "--timeout=20", tmp_dir],
+                capture_output=True, text=True, timeout=25,
+            )
+            if result.stdout:
+                data = json.loads(result.stdout)
+                for r in data.get("results", [])[:15]:
+                    findings.append({
+                        "file": r.get("path", "unknown"),
+                        "line": r.get("start", {}).get("line", 0),
+                        "rule": r.get("check_id", "unknown"),
+                        "message": r.get("extra", {}).get("message", ""),
+                        "severity": r.get("extra", {}).get("severity", "INFO"),
+                    })
+    except FileNotFoundError:
+        print("[Semgrep] Not installed — skipping static analysis")
+    except subprocess.TimeoutExpired:
+        print("[Semgrep] Scan timed out — skipping")
+    except Exception as e:
+        print(f"[Semgrep] Skipped: {e}")
+
+    return findings
+
+
 def review_security(pr_data: dict) -> str:
-    """Security Reviewer subagent."""
+    """Security Reviewer subagent — grounded with Semgrep findings."""
     files_text = "\n".join([
         f"- {f.get('filename', 'unknown')}: +{f.get('additions', 0)}/-{f.get('deletions', 0)}"
         + (f"\n```diff\n{f['patch'][:1500]}\n```" if f.get("patch") else "")
         for f in pr_data.get("files", [])[:10]
     ]) or "No file details available"
 
+    # Run Semgrep for real static analysis findings
+    semgrep_findings = _run_semgrep(pr_data)
+    semgrep_section = ""
+    if semgrep_findings:
+        semgrep_section = "\nSemgrep static analysis findings:\n" + "\n".join(
+            f"- [{f['severity']}] {f['file']}:{f['line']} — {f['rule']}: {f['message']}"
+            for f in semgrep_findings[:10]
+        ) + "\n"
+    else:
+        semgrep_section = "\nSemgrep: No static analysis issues detected (or semgrep not installed).\n"
+
     prompt = (
         f"Review this PR for SECURITY issues:\n\n"
         f"Title: {pr_data.get('title', 'Unknown')}\n"
         f"Description: {(pr_data.get('body') or 'No description')[:500]}\n"
-        f"Files changed:\n{files_text}\n\n"
+        f"Files changed:\n{files_text}\n"
+        f"{semgrep_section}\n"
         f"Check for:\n"
         f"- SQL injection vulnerabilities\n"
         f"- XSS (Cross-Site Scripting)\n"
@@ -129,6 +199,7 @@ def review_security(pr_data: dict) -> str:
         f"- Insecure authentication/authorization\n"
         f"- Path traversal risks\n"
         f"- Insecure dependencies\n\n"
+        f"IMPORTANT: If Semgrep found findings above, analyze each one and explain the risk.\n"
         f"Provide:\n"
         f"1. Security issues found (if any)\n"
         f"2. Risk level (Low/Medium/High)\n"
@@ -138,7 +209,7 @@ def review_security(pr_data: dict) -> str:
 
     result = _chat_completion(prompt, max_tokens=400, system_msg=(
         "You are a security code reviewer. Be specific about vulnerabilities. "
-        "Focus on real risks, not style issues."
+        "Focus on real risks, not style issues. If Semgrep found issues, prioritize those."
     ))
 
     return result or "Security review completed - no major issues found."

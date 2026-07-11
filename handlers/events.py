@@ -1,5 +1,6 @@
 import threading
 import re
+from config import SLACK_SUMMARY_MAX_MESSAGES
 from graph.workflow import sab_graph
 from services.github_service import detect_github_refs, fetch_github_issue
 from handlers.shared import fetch_thread_messages, fetch_channel_messages, build_initial_state
@@ -84,9 +85,9 @@ def handle_app_mention(event: dict, client, say, context: dict = None):
     original_msg, thread_messages = fetch_thread_messages(client, channel_id, event["ts"])
     print(f"[Mention] Thread messages: {len(thread_messages)}")
 
-    # If no thread, fetch last 6 channel messages
+    # If no thread, fetch last N channel messages
     if not thread_messages:
-        thread_messages = fetch_channel_messages(client, channel_id, count=6)
+        thread_messages = fetch_channel_messages(client, channel_id, count=SLACK_SUMMARY_MAX_MESSAGES)
         print(f"[Mention] Channel messages: {len(thread_messages)}")
 
     state = build_initial_state(

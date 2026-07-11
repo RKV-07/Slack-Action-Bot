@@ -2,13 +2,34 @@
 Learn Service - Multi-agent learning path generation.
 
 Uses MCP tools (primary) or direct API (fallback) to research topics.
+Uses Tavily search API for real web results (prevents hallucinated URLs).
 Three agents: Research → Structure → Resources
 """
 
 import json
 import requests
 from services.llm_service import _chat_completion
-from config import GITHUB_TOKEN
+from config import GITHUB_TOKEN, TAVILY_API_KEY
+
+
+def _tavily_search(query: str, count: int = 5) -> list:
+    """Search the web via Tavily API for real, verified results."""
+    if not TAVILY_API_KEY:
+        return []
+    try:
+        resp = requests.post(
+            "https://api.tavily.com/search",
+            json={"api_key": TAVILY_API_KEY, "query": query, "max_results": count},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return [
+                {"type": "web", "title": r["title"], "url": r["url"], "content": r.get("content", "")[:200]}
+                for r in resp.json().get("results", [])[:count]
+            ]
+    except Exception as e:
+        print(f"[Learn] Tavily search failed: {e}")
+    return []
 
 
 def _github_search_repos(query: str, count: int = 3) -> list:
@@ -67,13 +88,17 @@ def research_topic(topic: str) -> dict:
     """Research agent: Gather resources and information about the topic."""
     resources = _github_search_repos(f"{topic} tutorial")
 
-    # Use LLM to generate learning resources
+    # Tavily web search for real, verified URLs (prevents hallucinated links)
+    web_results = _tavily_search(f"{topic} learning resources tutorial documentation", count=5)
+    resources.extend(web_results)
+
+    # Use LLM to supplement with additional context (not URLs)
     llm_resources = _chat_completion(
-        f"List 3-5 best free learning resources for: {topic}\n"
-        f"Include: official docs, tutorials, courses, books.\n"
-        f"Format as JSON array with title, url, type fields.",
-        max_tokens=500,
-        system_msg="You are a learning resource curator. Be specific with URLs.",
+        f"List 3-5 best types of learning resources for: {topic}\n"
+        f"Describe what to search for (not URLs). Include: official docs, tutorials, courses.\n"
+        f"Format as JSON array with title and type fields only (no url field).",
+        max_tokens=400,
+        system_msg="You are a learning resource curator. Do NOT invent URLs. Describe resource types only.",
     )
 
     if llm_resources:
