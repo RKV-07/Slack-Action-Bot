@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "mcp>=1.0.0",
     "anyio>=4.0.0",
+    "dateparser>=1.4.1",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -23,3 +24,8 @@ packages = ["graph", "handlers", "services", "main.py", "config.py"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

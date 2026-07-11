@@ -24,8 +24,7 @@ def detect_github_refs(text: str) -> list[str]:
     for owner, repo, num in matches:
         if owner and repo:
             refs.append(f"{owner}/{repo}#{num}")
-        else:
-            refs.append(f"#{num}")
+        # Bare #123 not supported — no default repo
     return refs
 
 
@@ -43,10 +42,15 @@ def extract_repo_from_text(text: str) -> Optional[str]:
     plain_match = re.search(r'\b([\w][\w-]*/[\w][\w-]*)\b', text)
     if plain_match:
         candidate = plain_match.group(1)
-        parts = candidate.split('/')
-        if len(parts) == 2 and parts[0] and parts[1]:
-            if '.' not in parts[0] and '.' not in parts[1]:
-                return candidate
+        # Reject if there's a dot immediately before the match (e.g. some.thing/repo)
+        start = plain_match.start()
+        if start > 0 and text[start - 1] == '.':
+            pass  # skip — dot-prefixed means not a standalone owner
+        else:
+            parts = candidate.split('/')
+            if len(parts) == 2 and parts[0] and parts[1]:
+                if '.' not in parts[0] and '.' not in parts[1]:
+                    return candidate
 
     return None
 
@@ -94,13 +98,16 @@ def fetch_github_issue(repo: str, issue_number: int) -> Optional[dict]:
         resp = requests.get(url, headers=_headers(), timeout=10)
         if resp.status_code == 200:
             data = resp.json()
+            if not data or not isinstance(data, dict):
+                print(f"[GitHub] Unexpected response for {repo}#{issue_number}: {str(data)[:200]}")
+                return None
             return {
-                "title": data["title"],
-                "state": data["state"],
-                "url": data["html_url"],
-                "body": data.get("body", "")[:500],
-                "labels": [l["name"] for l in data.get("labels", [])],
-                "number": data["number"],
+                "title": data.get("title", "Untitled"),
+                "state": data.get("state", "unknown"),
+                "url": data.get("html_url", ""),
+                "body": (data.get("body") or "")[:500],
+                "labels": [l["name"] for l in data.get("labels", []) if isinstance(l, dict)],
+                "number": data.get("number", issue_number),
                 "repo": repo,
             }
         print(f"[GitHub] {repo}#{issue_number}: HTTP {resp.status_code}")
@@ -133,7 +140,7 @@ def fetch_latest_issues(count: int = 5) -> list[dict]:
                             "title": item["title"],
                             "state": item["state"],
                             "url": item["html_url"],
-                            "body": item.get("body", "")[:500],
+                            "body": (item.get("body") or "")[:500],
                             "number": item["number"],
                             "repo": repo,
                             "type": "Issue",
@@ -171,7 +178,7 @@ def fetch_latest_prs(count: int = 5) -> list[dict]:
                         "title": pr["title"],
                         "state": pr["state"],
                         "url": pr["html_url"],
-                        "body": pr.get("body", "")[:500],
+                        "body": (pr.get("body") or "")[:500],
                         "number": pr["number"],
                         "repo": repo,
                         "user": pr["user"]["login"],
@@ -205,7 +212,7 @@ def fetch_repo_issues(repo: str, count: int = 5) -> list[dict]:
                     "title": item["title"],
                     "state": item["state"],
                     "url": item["html_url"],
-                    "body": item.get("body", "")[:500],
+                    "body": (item.get("body") or "")[:500],
                     "number": item["number"],
                     "repo": repo,
                     "type": "Issue",
@@ -237,7 +244,7 @@ def fetch_repo_prs(repo: str, count: int = 5) -> list[dict]:
                     "title": pr["title"],
                     "state": pr["state"],
                     "url": pr["html_url"],
-                    "body": pr.get("body", "")[:500],
+                    "body": (pr.get("body") or "")[:500],
                     "number": pr["number"],
                     "repo": repo,
                     "user": pr["user"]["login"],

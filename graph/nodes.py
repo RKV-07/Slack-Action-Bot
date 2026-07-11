@@ -1,4 +1,5 @@
 import re
+import difflib
 from .state import BotState, ActionContext, ReminderData
 from services.github_service import (
     fetch_github_issue, detect_github_refs,
@@ -14,6 +15,20 @@ from services.codereview_service import (
     review_security, review_performance, review_best_practices,
     merge_reviews,
 )
+
+
+_COMMAND_ALIASES = {
+    "codereview": "codereview", "coderview": "codereview", "code": "codereview",
+    "review": "codereview", "pr": "codereview",
+    "learn": "learn",
+}
+
+
+def _match_command(first_word: str) -> str | None:
+    if first_word in _COMMAND_ALIASES:
+        return _COMMAND_ALIASES[first_word]
+    close = difflib.get_close_matches(first_word, _COMMAND_ALIASES.keys(), n=1, cutoff=0.75)
+    return _COMMAND_ALIASES[close[0]] if close else None
 
 
 def classify_intent(state: BotState) -> BotState:
@@ -32,6 +47,15 @@ def classify_intent(state: BotState) -> BotState:
 
     raw_lower = raw.lower().strip()
 
+    # Typo-tolerant command matching (catches "coderview", "review", "code", etc.)
+    first_word = raw_lower.split()[0] if raw_lower.split() else ""
+    matched = _match_command(first_word)
+    if matched:
+        state["command_type"] = matched
+        if matched == "learn":
+            state["learn_topic"] = re.sub(r'^\w+\s*', '', state["raw_input"].strip()).strip()
+        return state
+
     # test / test llm
     if re.match(r'^test(?:\s+llm)?$', raw_lower):
         state["command_type"] = "test_llm"
@@ -40,7 +64,6 @@ def classify_intent(state: BotState) -> BotState:
     # learn command: learn <topic>
     if re.match(r'^learn\b', raw_lower):
         state["command_type"] = "learn"
-        # Extract topic after "learn"
         topic = re.sub(r'^learn\s*', '', state["raw_input"].strip(), flags=re.IGNORECASE).strip()
         state["learn_topic"] = topic
         return state
@@ -50,8 +73,8 @@ def classify_intent(state: BotState) -> BotState:
         state["command_type"] = "codereview"
         return state
 
-    # explicit summarize keyword - always route to context
-    if re.match(r'^summarize?$', raw_lower):
+    # summarize keyword — catch summarize/summarise/summraise/typos + trailing words
+    if re.search(r'\bsum+ar\w*\b|\bsum+ra\w*\b', raw_lower):
         state["command_type"] = "context"
         state["needs_llm"] = True
         return state
@@ -67,6 +90,15 @@ def classify_intent(state: BotState) -> BotState:
             state["command_type"] = "latest_github"
             return state
 
+    # help intent — must come before greeting_words to prevent misrouting
+    HELP_PHRASES = {
+        "help", "what can you do", "what do you do", "who are you",
+        "commands", "list commands", "show commands", "menu",
+    }
+    if raw_lower in HELP_PHRASES:
+        state["command_type"] = "help"
+        return state
+
     # exact greeting words only
     greeting_words = {
         "hi", "hey", "hello", "hlo", "hlw", "heu", "hii", "heyy",
@@ -74,12 +106,21 @@ def classify_intent(state: BotState) -> BotState:
         "howdy", "greetings", "welcome",
         "how are u", "how are you", "whats up", "what's up",
         "good morning", "good night",
-        "what can you do", "what do you do", "who are you",
         "ping", "pong",
     }
 
     if raw_lower in greeting_words:
         state["command_type"] = "greeting"
+        return state
+
+    # GitHub PR URL → codereview (parse_review_ref already handles URL format)
+    if re.search(r'github\.com/[\w-]+/[\w-]+/pull/\d+', raw_lower):
+        state["command_type"] = "codereview"
+        return state
+
+    # GitHub issue URL → github lookup
+    if re.search(r'github\.com/[\w-]+/[\w-]+/issues/\d+', raw_lower):
+        state["command_type"] = "github"
         return state
 
     # GitHub ref: owner/repo#123 (bare #123 not supported — no default repo)
@@ -171,8 +212,57 @@ def parse_reminder(state: BotState) -> BotState:
             channel_id=state["channel_id"],
         )
     else:
+        # Fallback: try dateparser for natural language like "remind me tomorrow at 3pm"
+        try:
+            import dateparser
+            from datetime import datetime
+
+            # Extract the task text — strip common prefixes
+            task_text = re.sub(
+                r'\b(remind\s+me\s+to\s+|remind\s+me\s+|remind\s+)',
+                '', text, flags=re.IGNORECASE
+            ).strip()
+
+            # Pre-normalize "X mins later" → "in X minutes" for dateparser
+            task_text = re.sub(
+                r'\b(?:in\s+)?(\d+)\s*(min(?:ute)?s?|hours?|hrs?)\s+later\b',
+                r'in \1 \2', task_text, flags=re.IGNORECASE
+            )
+
+            # Let dateparser find the time expression
+            parsed_time = dateparser.parse(
+                task_text,
+                settings={
+                    'PREFER_DATES_FROM': 'future',
+                },
+            )
+
+            if parsed_time:
+                now = datetime.now()
+                delay_seconds = int((parsed_time - now).total_seconds())
+                if delay_seconds > 0:
+                    reminder_text = re.sub(
+                        r'\b(in \d+ \w+|tomorrow|next \w+|at \d+:\d+|\d+ (?:hours?|minutes?|mins?|hrs?)\w*)',
+                        '', task_text, flags=re.IGNORECASE
+                    ).strip().rstrip('to ').strip()
+                    if not reminder_text:
+                        reminder_text = task_text
+
+                    state["reminder_data"] = ReminderData(
+                        text=reminder_text,
+                        delay_seconds=delay_seconds,
+                        user_id=state["user_id"],
+                        channel_id=state["channel_id"],
+                    )
+                    return state
+        except Exception:
+            pass
+
         state["response_message"] = (
-            "Could not parse reminder. Use format: `/sab -r \"task\" @30m`"
+            "Could not parse reminder. Use format:\n"
+            "• `/sab -r \"task\" @30m`\n"
+            "• `/sab remind me to call mom @1h`\n"
+            "• `/sab remind me to check server tomorrow at 3pm`"
         )
     return state
 
@@ -275,15 +365,26 @@ def build_github_response(state: BotState) -> BotState:
 
 
 def build_help_response(state: BotState) -> BotState:
-    reply = generate_reply("What can you do? List your commands.")
-    state["response_message"] = reply if reply else (
-        "I can help with:\n"
-        "• Summarize messages — just mention me or say `summarize`\n"
-        "• `/sab -r \"task\" @30m` — Set reminders\n"
-        "• GitHub lookups — mention #123 or org/repo#123\n"
-        "• `/sab latest issues` — Fetch latest issues\n"
-        "• `/sab latest prs` — Fetch latest PRs\n"
-        "• `/sab test` — Test LLM connection"
+    state["response_message"] = (
+        "*I'm SAB — your Slack Actions Bot.* Here's everything I can do:\n\n"
+        "*📝 Summarize*\n"
+        "• `/sab summarize` (in a thread or channel) — summarizes up to 25 recent messages\n"
+        "• Just say \"summarize\" or \"catch me up\" — same thing\n\n"
+        "*⏰ Reminders*\n"
+        "• `/sab -r \"task\" @30m` — reminder in 30 min (also `@2h` for hours)\n"
+        "• `/sab remind me to check the server tomorrow at 3pm` — natural language works too\n\n"
+        "*🔍 GitHub lookups*\n"
+        "• Mention `owner/repo#123` — pulls up that issue or PR\n"
+        "• Paste a GitHub PR/issue link directly — same result\n"
+        "• `/sab latest issues` / `/sab latest prs` — newest open items\n\n"
+        "*🛠️ Code review*\n"
+        "• `/sab codereview owner/repo#123` — security, performance, and best-practices review\n"
+        "• Works with a pasted PR link too\n\n"
+        "*📚 Learn*\n"
+        "• `/sab learn <topic>` — a structured learning path with resources\n\n"
+        "*🩺 Diagnostics*\n"
+        "• `/sab test` — checks the local LLM connection\n\n"
+        "@mention me anytime, or use `/sab` — I'll figure out what you need."
     )
     return state
 
@@ -393,6 +494,14 @@ def codereview_fetch(state: BotState) -> BotState:
             "Please specify a repo. Use format:\n"
             "• `/sab codereview owner/repo#123`\n"
             "• `/sab codereview https://github.com/owner/repo/pull/123`"
+        )
+        return state
+
+    if pr_number is None:
+        state["response_message"] = (
+            f"`{repo}` is a repo, not a specific PR — I can only review one PR at a time.\n"
+            f"Try `/sab codereview {repo}#123`, or run `/sab latest prs {repo}` "
+            f"to see open PRs to pick a number from."
         )
         return state
 

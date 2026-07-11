@@ -123,7 +123,7 @@ def structure_learning_path(topic: str, resources: list) -> dict:
     ))
 
     path = {"levels": [], "total_hours": 0}
-    if result:
+    if result is not None and result.strip():
         try:
             cleaned = result.strip()
             if cleaned.startswith("```"):

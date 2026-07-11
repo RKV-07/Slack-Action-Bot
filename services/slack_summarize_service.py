@@ -10,6 +10,7 @@ and only the most recent `max_messages` are summarized.
 import json
 
 from config import SLACK_BOT_TOKEN, SLACK_SUMMARY_MAX_MESSAGES
+from handlers.shared import is_real_message
 from services.llm_service import summarize_thread_messages
 
 
@@ -23,7 +24,7 @@ def _fetch_via_mcp(channel_id: str, thread_ts: str = None) -> str:
         tool = "slack_get_thread_replies" if thread_ts else "slack_get_channel_history"
         args = {
             "channel_id": channel_id,
-            "limit": SLACK_SUMMARY_MAX_MESSAGES + 1,  # +1 to detect overflow
+            "limit": SLACK_SUMMARY_MAX_MESSAGES,
         }
         if thread_ts:
             args["thread_ts"] = thread_ts
@@ -44,20 +45,24 @@ def _fetch_direct(channel_id: str, thread_ts: str = None) -> str:
         from slack_sdk.errors import SlackApiError
 
         client = WebClient(token=SLACK_BOT_TOKEN)
+        # Over-fetch +10 to buffer against filtered bot messages
+        fetch_limit = SLACK_SUMMARY_MAX_MESSAGES + 10
         if thread_ts:
             resp = client.conversations_replies(
-                channel=channel_id, ts=thread_ts, limit=SLACK_SUMMARY_MAX_MESSAGES + 1
+                channel=channel_id, ts=thread_ts, limit=fetch_limit
             )
         else:
             resp = client.conversations_history(
-                channel=channel_id, limit=SLACK_SUMMARY_MAX_MESSAGES + 1
+                channel=channel_id, limit=fetch_limit
             )
         messages = [
             {"user": m.get("user", "unknown"), "text": m.get("text", ""), "ts": m.get("ts", "")}
             for m in resp.get("messages", [])
-            if not m.get("bot_id") and m.get("text", "").strip()
+            if is_real_message(m)
         ]
         messages.reverse()
+        # has_more is from Slack's raw page (before filtering); count is after
+        # filtering — they may differ when bot messages were present.
         return json.dumps({
             "messages": messages,
             "count": len(messages),

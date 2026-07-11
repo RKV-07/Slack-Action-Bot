@@ -1,6 +1,7 @@
 import re
 import atexit
 import threading
+from collections import OrderedDict
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from config import SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET, GITHUB_TOKEN, MCP_GITHUB_ENABLED, MCP_FETCH_ENABLED, MCP_SLACK_ENABLED
@@ -15,6 +16,17 @@ app = App(
 )
 
 GITHUB_REF_PATTERN = re.compile(r"\b[\w-]+/[\w-]+#\d+\b")
+
+_seen = OrderedDict()
+
+
+def _already_processed(key: str) -> bool:
+    if key in _seen:
+        return True
+    _seen[key] = True
+    if len(_seen) > 200:
+        _seen.popitem(last=False)
+    return False
 
 
 def init_mcp_servers():
@@ -45,6 +57,8 @@ def _cleanup_mcp():
 @app.command("/sab")
 def cmd_sab(ack, command, client, logger):
     ack()
+    if _already_processed(command.get("trigger_id", "")):
+        return
     try:
         response = handle_sab_command(command, client)
         client.chat_postMessage(
@@ -80,9 +94,9 @@ def on_message(event, say, client, logger):
 
 @app.event("app_mention")
 @with_processing_reaction
-def on_mention(event, say, client, logger):
+def on_mention(event, say, client, logger, context):
     try:
-        handle_app_mention(event, client, say)
+        handle_app_mention(event, client, say, context=context)
     except Exception as e:
         logger.error(f"Error in mention handler: {e}")
         say("Something went wrong. Try `/sab test` to check LLM.")

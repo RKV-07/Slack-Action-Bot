@@ -1,6 +1,7 @@
 import concurrent.futures
+import re
 from graph.workflow import sab_graph
-from handlers.shared import fetch_thread_messages, build_initial_state
+from handlers.shared import fetch_thread_messages, fetch_channel_messages, build_initial_state
 
 # Limit concurrent background threads to prevent resource exhaustion
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
@@ -15,7 +16,9 @@ def _execute_command_graph_async(state: dict, client, command: dict):
             thread_ts=command.get("thread_ts"),
         )
     except Exception as e:
+        import traceback
         print(f"[Command Error] Failed background execution: {e}")
+        traceback.print_exc()
         try:
             client.chat_postMessage(
                 channel=command["channel_id"],
@@ -40,6 +43,11 @@ def handle_sab_command(command: dict, client) -> str:
         original_msg, thread_messages = fetch_thread_messages(client, channel_id, thread_ts)
         if thread_messages:
             mentioned_by = thread_messages[0].get("user")
+
+    # If no thread messages and command looks like summarize, fetch channel context
+    raw_lower = (text or "").lower().strip()
+    if not thread_messages and re.search(r'\bsum+ar\w*\b|\bsum+ra\w*\b', raw_lower):
+        thread_messages = fetch_channel_messages(client, channel_id, count=6)
 
     state = build_initial_state(
         user_id=user_id,

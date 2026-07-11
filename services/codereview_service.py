@@ -7,6 +7,7 @@ Uses MCP GitHub (primary) or direct API (fallback) to fetch PR diffs.
 
 import json
 import re
+import traceback
 from typing import Optional
 import requests
 from services.llm_service import _chat_completion
@@ -15,15 +16,22 @@ from config import GITHUB_TOKEN
 
 def parse_review_ref(raw_input: str) -> Optional[dict]:
     """Extract repo and PR number from user input."""
-    match = re.search(r'([\w-]+/[\w-]+)?#(\d+)', raw_input)
+    match = re.search(r'([\w-]+/[\w-]+)#(\d+)', raw_input)
     if match:
-        repo = match.group(1)
-        pr_num = int(match.group(2))
-        return {"repo": repo, "pr_number": pr_num}
+        return {"repo": match.group(1), "pr_number": int(match.group(2))}
 
     url_match = re.search(r'github\.com/([\w-]+/[\w-]+)/pull/(\d+)', raw_input)
     if url_match:
         return {"repo": url_match.group(1), "pr_number": int(url_match.group(2))}
+
+    # Bare repo (URL or owner/repo) with no PR number — return repo-only so
+    # the caller can give a specific, useful error instead of a generic one.
+    bare_url = re.search(r'github\.com/([\w.-]+/[\w.-]+?)(?:[/?#\s]|$)', raw_input)
+    if bare_url:
+        return {"repo": bare_url.group(1), "pr_number": None}
+    bare_repo = re.search(r'\b([\w][\w-]*/[\w][\w-]*)\b', raw_input)
+    if bare_repo and "#" not in raw_input:
+        return {"repo": bare_repo.group(1), "pr_number": None}
 
     return None
 
@@ -44,13 +52,14 @@ def _github_get_pr(repo: str, pr_number: int) -> dict:
                 if isinstance(pr_data, dict) and pr_data.get("title"):
                     return {
                         "title": pr_data.get("title", ""),
-                        "body": pr_data.get("body", "")[:2000],
+                        "body": (pr_data.get("body") or "")[:2000],
                         "state": pr_data.get("state", ""),
                         "diff_url": pr_data.get("diff_url", ""),
                         "files": pr_data.get("files", []),
                     }
     except Exception as e:
         print(f"[CodeReview] MCP fetch failed: {e}")
+        traceback.print_exc()
 
     # Fallback: direct API (GET /pulls + GET /pulls/files for patch text)
     if GITHUB_TOKEN:
@@ -63,6 +72,9 @@ def _github_get_pr(repo: str, pr_number: int) -> dict:
             )
             if resp.status_code == 200:
                 pr_data = resp.json()
+                if not pr_data or not isinstance(pr_data, dict):
+                    print(f"[CodeReview] GitHub API returned unexpected body for {repo}#{pr_number}: {str(pr_data)[:200]}")
+                    return {"title": "Unknown PR", "body": "", "state": "unknown", "files": []}
                 files = pr_data.get("files", [])
 
                 # Also fetch files endpoint to get patch/diff text
@@ -72,17 +84,22 @@ def _github_get_pr(repo: str, pr_number: int) -> dict:
                     timeout=10,
                 )
                 if files_resp.status_code == 200:
-                    files = files_resp.json()
+                    files_data = files_resp.json()
+                    if isinstance(files_data, list):
+                        files = files_data
 
                 return {
                     "title": pr_data.get("title", ""),
-                    "body": pr_data.get("body", "")[:2000],
+                    "body": (pr_data.get("body") or "")[:2000],
                     "state": pr_data.get("state", ""),
                     "diff_url": pr_data.get("diff_url", ""),
                     "files": files,
                 }
+            else:
+                print(f"[CodeReview] GitHub API returned status {resp.status_code} for {repo}#{pr_number}")
         except Exception as e:
             print(f"[CodeReview] Direct API failed: {e}")
+            traceback.print_exc()
 
     return {"title": "Unknown PR", "body": "", "state": "unknown", "files": []}
 
@@ -103,7 +120,7 @@ def review_security(pr_data: dict) -> str:
     prompt = (
         f"Review this PR for SECURITY issues:\n\n"
         f"Title: {pr_data.get('title', 'Unknown')}\n"
-        f"Description: {pr_data.get('body', 'No description')[:500]}\n"
+        f"Description: {(pr_data.get('body') or 'No description')[:500]}\n"
         f"Files changed:\n{files_text}\n\n"
         f"Check for:\n"
         f"- SQL injection vulnerabilities\n"
@@ -138,7 +155,7 @@ def review_performance(pr_data: dict) -> str:
     prompt = (
         f"Review this PR for PERFORMANCE issues:\n\n"
         f"Title: {pr_data.get('title', 'Unknown')}\n"
-        f"Description: {pr_data.get('body', 'No description')[:500]}\n"
+        f"Description: {(pr_data.get('body') or 'No description')[:500]}\n"
         f"Files changed:\n{files_text}\n\n"
         f"Check for:\n"
         f"- N+1 query problems\n"
@@ -173,7 +190,7 @@ def review_best_practices(pr_data: dict) -> str:
     prompt = (
         f"Review this PR for BEST PRACTICES:\n\n"
         f"Title: {pr_data.get('title', 'Unknown')}\n"
-        f"Description: {pr_data.get('body', 'No description')[:500]}\n"
+        f"Description: {(pr_data.get('body') or 'No description')[:500]}\n"
         f"Files changed:\n{files_text}\n\n"
         f"Check for:\n"
         f"- Code style consistency\n"

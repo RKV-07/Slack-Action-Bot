@@ -10,8 +10,10 @@ def _execute_message_github_async(refs: list, say):
     try:
         responses = []
         for ref in refs:
+            if "#" not in ref:
+                continue
             parts = ref.split("#")
-            if len(parts) != 2:
+            if len(parts) != 2 or not parts[0] or not parts[1]:
                 continue
             repo = parts[0]
             try:
@@ -33,7 +35,9 @@ def _execute_message_github_async(refs: list, say):
         else:
             say(text="Could not fetch GitHub issue/PR details.")
     except Exception as e:
+        import traceback
         print(f"[Message Error] Failed GitHub fetch: {e}")
+        traceback.print_exc()
         say(text="Sorry, I ran into an error fetching GitHub data.")
 
 
@@ -58,12 +62,15 @@ def _execute_graph_async(state: dict, say):
         print(f"[Graph] Response: {response[:100]}...")
         say(text=response)
     except Exception as e:
+        import traceback
         print(f"[Graph Error] Failed background execution: {e}")
+        traceback.print_exc()
         say(text="Sorry, I ran into an error processing that request.")
 
 
-def handle_app_mention(event: dict, client, say):
-    if event.get("headers", {}).get("X-Slack-Retry-Num"):
+def handle_app_mention(event: dict, client, say, context: dict = None):
+    # Bolt injects retry_num in context, not in event headers
+    if context and context.get("retry_num"):
         return
 
     user_id = event["user"]

@@ -17,6 +17,23 @@ def _get_bot_user_id(client) -> str:
     return _bot_user_id
 
 
+def is_real_message(msg: dict, bot_user_id: str = None) -> bool:
+    """Shared filter: returns True if a Slack message is from a real human.
+
+    Used by fetch_thread_messages, fetch_channel_messages, mcp_slack_server,
+    and slack_summarize_service to keep filtering consistent.
+    """
+    if msg.get("bot_id"):
+        return False
+    if bot_user_id and msg.get("user") == bot_user_id:
+        return False
+    if msg.get("subtype") in ("bot_message", "bot_add"):
+        return False
+    if not msg.get("text", "").strip():
+        return False
+    return True
+
+
 def fetch_thread_messages(client, channel_id: str, ts: str) -> tuple[str, list[dict]]:
     """Fetch messages from a thread (conversations_replies)."""
     try:
@@ -37,11 +54,7 @@ def fetch_thread_messages(client, channel_id: str, ts: str) -> tuple[str, list[d
 
         thread = []
         for m in messages:
-            if m.get("bot_id"):
-                continue
-            if bot_user_id and m.get("user") == bot_user_id:
-                continue
-            if m.get("subtype") in ("bot_message", "bot_add"):
+            if not is_real_message(m, bot_user_id):
                 continue
             thread.append({
                 "user": m.get("user", "unknown"),
@@ -76,11 +89,7 @@ def fetch_channel_messages(client, channel_id: str, count: int = 6) -> list[dict
 
         result = []
         for m in messages:
-            if m.get("bot_id"):
-                continue
-            if bot_user_id and m.get("user") == bot_user_id:
-                continue
-            if m.get("subtype") in ("bot_message", "bot_add"):
+            if not is_real_message(m, bot_user_id):
                 continue
             text = m.get("text", "").strip()
             if len(text) < 3:

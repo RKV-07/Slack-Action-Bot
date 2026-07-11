@@ -180,12 +180,15 @@ def setup_mcp_servers(github_token: str = None):
         import os
         import sys
 
+        from config import SLACK_BOT_TOKEN
+
         slack_server_path = os.path.join(os.path.dirname(__file__), "mcp_slack_server.py")
+        env = {"SLACK_BOT_TOKEN": SLACK_BOT_TOKEN} if SLACK_BOT_TOKEN else None
         mcp_client.connect(
             name="slack",
             command=sys.executable,
             args=[slack_server_path],
-            env=dict(os.environ),
+            env=env,
         )
         print("[MCP] Slack server ready")
     except Exception as e:
