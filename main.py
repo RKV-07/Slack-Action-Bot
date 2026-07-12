@@ -1,11 +1,3 @@
-<<<<<<< HEAD
-import os
-from dotenv import load_dotenv
-
-
-dir(os)
-dir(load_dotenv)
-=======
 import re
 import atexit
 import threading
@@ -145,4 +137,3 @@ def start():
 
 if __name__ == "__main__":
     start()
->>>>>>> origin/best-working-state
