@@ -56,12 +56,14 @@ Built with **LangGraph StateGraph** for deterministic, debuggable agentic workfl
 │  ┌──────────┐                                                       │
 │  │ classify │ ◄── entry_point                                       │
 │  └────┬─────┘                                                       │
-│       │ 12 conditional routes                                       │
+│       │ 15 conditional routes                                       │
 │       ├──► reminder (parse → schedule / list / cancel)              │
 │       ├──► github (extract → fetch → response)                      │
 │       ├──► context (summarize → response)                           │
 │       ├──► learn (research → structure → resources → response)      │
 │       ├──► codereview (fetch → [security,performance,best] → merge) │
+│       ├──► search (RTS via assistant.search.context)                │
+│       ├──► digest / duplicate / release_notes                       │
 │       ├──► help / greeting / chat / test_llm                        │
 └────────────────────────────┬────────────────────────────────────────┘
                              ▼
@@ -72,18 +74,22 @@ Built with **LangGraph StateGraph** for deterministic, debuggable agentic workfl
 │  ├── codereview_service.py ──► Semgrep + 3 LLM subagents           │
 │  ├── learn_service.py ──► Tavily search + GitHub repos + LLM        │
 │  ├── reminder_service.py ──► SQLite-backed APScheduler              │
+│  ├── slack_search_service.py ──► Slack RTS (assistant.search)       │
 │  └── mcp_client.py ──► GitHub/Fetch/Slack MCP servers               │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+### Public Repo Access
+GitHub lookups work for **public repos without a token**. Set `GITHUB_TOKEN` in `.env` for private repos and higher rate limits (5,000/hr vs 60/hr unauthenticated).
+
 ### Tech Stack
 - **LangGraph** — StateGraph workflow orchestration with fan-out/fan-in
 - **Slack Bolt** — Socket Mode event handling
-- **Local Qwen3-8B** — LLM via llama-server (no cloud API)
+- **Local Qwen3-8B** — LLM via llama-server (zero API cost, no data leaves machine)
 - **APScheduler** — SQLite-persisted reminder scheduling
-- **GitHub API** — Issue/PR lookup with TTL cache
+- **GitHub API** — Issue/PR lookup with TTL cache (works without token for public repos)
 - **MCP** — Model Context Protocol for extensible tool access (GitHub, Fetch, custom Slack server)
-- **Semgrep** — Real static analysis for security reviews
+- **Semgrep** — Real static analysis for security reviews (pinned ruleset, no network lookup)
 - **Tavily** — Web search for verified learning resources
 - **dateparser** — Natural language time parsing
 - **difflib** — Typo-tolerant command matching
@@ -132,17 +138,15 @@ Slack-Action-Bot/
    SLACK_BOT_TOKEN=xoxb-...
    SLACK_APP_TOKEN=xapp-...
    SLACK_SIGNING_SECRET=...
-   GITHUB_TOKEN=ghp-...
+   GITHUB_TOKEN=ghp-...           # optional for public repos
    LLAMA_BASE_URL=http://localhost:8080
    LLAMA_PARALLEL=4
    LLM_PROVIDER=local
    LLM_FALLBACK_ENABLED=true
-   GOOGLE_API_KEY=...          # optional, Gemini fallback when local fails
+   GOOGLE_API_KEY=...              # optional, Gemini fallback when local fails
    GEMINI_MODEL=gemini-2.0-flash
-    TAVILY_API_KEY=tvly-...        # optional, for /learn web search
-    # Add search:read.public, search:read.files, search:read.users scopes
-    # in your Slack app config for real-time search
-    ```
+   TAVILY_API_KEY=tvly-...         # optional, for /learn web search
+   ```
 
 3. Install dependencies:
    ```bash
@@ -150,7 +154,12 @@ Slack-Action-Bot/
    uv sync --group optional   # installs semgrep for code review static analysis
    ```
 
-4. Run the bot:
+4. Enable Real-Time Search (optional):
+   - Go to https://api.slack.com/apps → your app → **App Home** → enable **Assistant**
+   - Add Bot Token Scopes: `search:read.public`, `search:read.files`, `search:read.users`
+   - Reinstall app to workspace
+
+5. Run the bot:
    ```bash
    uv run main.py
    ```

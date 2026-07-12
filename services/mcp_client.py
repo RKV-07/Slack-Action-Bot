@@ -15,6 +15,10 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 
+_CONNECT_TIMEOUT = 90
+_CALL_TIMEOUT = 20
+
+
 class MCPClient:
     """Sync wrapper for MCP client sessions."""
 
@@ -34,15 +38,15 @@ class MCPClient:
                 self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
                 self._thread.start()
 
-    def _run_async(self, coro):
+    def _run_async(self, coro, timeout=_CALL_TIMEOUT):
         """Run async coroutine in background loop with timeout."""
         self._ensure_loop()
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
-            return future.result(timeout=30)
+            return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
-            print("[MCP] Tool call timed out after 30s")
-            return "Error: MCP tool call timed out"
+            print(f"[MCP] Operation timed out after {timeout}s")
+            return f"Error: MCP operation timed out after {timeout}s"
         except Exception as e:
             print(f"[MCP] Error: {e}")
             return f"Error: {e}"
@@ -96,9 +100,10 @@ class MCPClient:
             return "\n".join(texts) if texts else str(result)
         return str(result)
 
-    def connect(self, name: str, command: str, args: list[str], env: dict = None):
-        """Sync: Connect to an MCP server."""
-        self._run_async(self._connect_server(name, command, args, env))
+    def connect(self, name: str, command: str, args: list[str], env: dict = None) -> bool:
+        """Sync: Connect to an MCP server. Returns True if connected."""
+        self._run_async(self._connect_server(name, command, args, env), timeout=_CONNECT_TIMEOUT)
+        return name in self._sessions
 
     def disconnect(self, name: str):
         """Sync: Disconnect from an MCP server."""
@@ -154,24 +159,28 @@ def setup_mcp_servers(github_token: str = None):
         if github_token:
             env["GITHUB_PERSONAL_ACCESS_TOKEN"] = github_token
 
-        mcp_client.connect(
+        if mcp_client.connect(
             name="github",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
             env=env if env else None,
-        )
-        print("[MCP] GitHub server ready")
+        ):
+            print("[MCP] GitHub server ready")
+        else:
+            print("[MCP] GitHub server FAILED to connect within 90s")
     except Exception as e:
         print(f"[MCP] Failed to connect GitHub server: {e}")
 
     try:
         # Fetch MCP Server (Python-based, run with uvx)
-        mcp_client.connect(
+        if mcp_client.connect(
             name="fetch",
             command="uvx",
             args=["mcp-server-fetch"],
-        )
-        print("[MCP] Fetch server ready")
+        ):
+            print("[MCP] Fetch server ready")
+        else:
+            print("[MCP] Fetch server FAILED to connect within 90s")
     except Exception as e:
         print(f"[MCP] Failed to connect fetch server: {e}")
 
@@ -184,13 +193,15 @@ def setup_mcp_servers(github_token: str = None):
 
         slack_server_path = os.path.join(os.path.dirname(__file__), "mcp_slack_server.py")
         env = {"SLACK_BOT_TOKEN": SLACK_BOT_TOKEN} if SLACK_BOT_TOKEN else None
-        mcp_client.connect(
+        if mcp_client.connect(
             name="slack",
             command=sys.executable,
             args=[slack_server_path],
             env=env,
-        )
-        print("[MCP] Slack server ready")
+        ):
+            print("[MCP] Slack server ready")
+        else:
+            print("[MCP] Slack server FAILED to connect within 90s")
     except Exception as e:
         print(f"[MCP] Failed to connect slack server: {e}")
 

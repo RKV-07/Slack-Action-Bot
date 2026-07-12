@@ -25,14 +25,21 @@ def search_slack_context(action_token: str, query: str) -> dict:
         {"messages": [...]} on success
         {"error": "..."} on failure
     """
+    print(f"[Search] action_token present: {bool(action_token)}, query: {query}")
+
     if not action_token:
         return {
             "error": (
-                "No action_token available — real-time search requires an "
-                "`action_token` from a Slack message or app_mention event.\n\n"
-                "This works best when the bot is @mentioned in a channel. "
-                "Add the `search:read.public` scope in your Slack app config "
-                "and reinstall to the workspace."
+                "No `action_token` available — the bot's Slack app needs AI "
+                "features enabled for real-time search to work.\n\n"
+                "**Setup steps:**\n"
+                "1. Go to https://api.slack.com/apps → your app → **App Home**\n"
+                "2. Enable **Assistant** under the Assistant tab\n"
+                "3. Add scopes: `search:read.public`, `search:read.files`, `search:read.users`\n"
+                "4. Reinstall the app to the workspace\n"
+                "5. @mention the bot in a channel (not /sab slash command)\n\n"
+                "_The action_token is only injected into @mention events, "
+                "not slash commands._"
             )
         }
 

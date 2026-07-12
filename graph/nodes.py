@@ -793,11 +793,14 @@ def search_node(state: BotState) -> BotState:
         return state
 
     action_token = state.get("action_token", "")
+    print(f"[Search] search_node called: query='{query}', action_token={'present' if action_token else 'EMPTY'}")
     result = search_slack_context(action_token, query)
 
     if result.get("error"):
+        print(f"[Search] Error: {result['error'][:200]}")
         state["response_message"] = result["error"]
         return state
 
+    print(f"[Search] Got {len(result.get('messages', []))} messages")
     state["response_message"] = summarize_search_results(query, result.get("messages", []))
     return state

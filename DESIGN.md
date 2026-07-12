@@ -103,27 +103,30 @@ A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local 
 | Decision | Why |
 |---|---|
 | LangGraph StateGraph | Structured routing, fan-out for parallel reviewers |
-| Local Qwen3-8B | Zero API cost, fast inference, no rate limits |
+| Local Qwen3-8B | Zero API cost, fast inference, no rate limits, no data leaves machine |
 | Dual LLM (`LLM_PROVIDER`) | Local Qwen3 primary; Gemini cross-fallback when `LLM_FALLBACK_ENABLED=true` |
 | `/no_think` prefix | Qwen3 returns reasoning in `reasoning_content` field; prefix bypasses |
 | MCP primary, direct API fallback | Extensible tool access, graceful degradation |
 | `difflib` fuzzy matching | Typo tolerance without new dependencies |
 | SQLite jobstore | Reminders survive bot restarts |
-| `cachetools.TTLCache` | 2-min cache prevents redundant GitHub API calls |
-| Semgrep in security reviewer | Real static analysis grounded in actual code findings (installed in uv) |
+| `cachetools.TTLCache` with lock | 2-min cache prevents redundant GitHub API calls; lock prevents cache stampede |
+| Semgrep pinned ruleset | `p/security-audit` avoids network lookup on every scan (~5s faster) |
+| MCP split timeouts | 90s for cold-start connect, 20s for tool calls (prevents premature timeout) |
+| GitHub public repo access | Public repos work without `GITHUB_TOKEN` (60 req/hr vs 5,000 with token) |
 | PR risk score | One-line risk indicator (🔴/🟡/🟢) from Semgrep + LLM |
 | Prompt truncation | Reviewer prompts capped at 3000 chars to fit Qwen3 context per slot |
 | MCP file fallback | When MCP returns no files, falls through to direct API for diffs |
 | Tavily in learn service | Real URLs instead of LLM-invented links |
 | MCP source-transparency footer | Visible proof of MCP usage in every review/resource output |
 | `_call_with_backoff()` | Rate-limit resilience for Slack API calls |
-| `md_to_slack_mrkdwn()` | Fixes broken Markdown and bare URLs before posting to Slack |
+| `md_to_slack_mrkdwn()` | Fixes broken Markdown, bare URLs, and Slack auto-links |
 | `trigger_id` dedup on `/sab` | Prevents Socket Mode redelivery duplicates |
 | `event_ts` dedup on mention/message | Prevents duplicate processing on redelivered events |
 | `is_real_message()` unified filter | Single source of truth across all 3 fetch paths |
 | `ThreadPoolExecutor(5)` | Bounded concurrent graph executions |
 | Values over globals | Thread-safe: `via_mcp`, `semgrep_findings` threaded through BotState |
 | Slack Real-Time Search | Cross-channel search via `assistant.search.context` with graceful fallback |
+| LLM 503 retry | Retries once on model loading (transient at boot) |
 
 ## BotState TypedDict
 
@@ -161,6 +164,9 @@ class BotState(TypedDict):
     review_warning: str
     review_via_mcp: bool
     review_semgrep_findings: list
+    # Real-time search fields
+    action_token: str
+    search_query: str
 ```
 
 ## Intent Classification Flow
@@ -176,6 +182,10 @@ classify_intent(state):
   "-r" / "remind" ────────────────► reminder
   "reminders" / "reminder cancel" ► reminder_list / reminder_cancel
   "latest issues/prs" ────────────► latest_github
+  "search ..." / "find discussions about" ► search
+  "digest subscribe/unsubscribe/demo" ► digest
+  "duplicate owner/repo" ──────────► duplicate
+  "release notes owner/repo" ──────► release_notes
   "what can you do" / "help" ─────► help
   "hi" / "hey" / "hello" ────────► greeting
   github.com/.../pull/N ──────────► codereview
@@ -194,6 +204,8 @@ classify_intent(state):
 | Slack | `services/mcp_slack_server.py` | stdio (in-repo) | Channel/thread message fetch |
 
 All MCP servers initialize in a background daemon thread at startup. The bot boots immediately and connects MCP asynchronously.
+
+**Timeout strategy:** Cold-start connect uses 90s timeout (npx/uvx package installs can be slow). Per-request tool calls use 20s timeout. If a session dies, it's auto-evicted and reconnected on next call.
 
 ## Dependencies
 

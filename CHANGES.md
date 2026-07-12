@@ -164,6 +164,48 @@ Short suffixes (e.g., `abc123`) auto-prefix to `reminder_abc123`.
 
 ---
 
+## MCP Timeout & Reliability Fixes
+
+### Date: 2026-07-12
+
+### Split Timeouts: Connect vs Tool Calls
+
+One timeout (30s) was used for two different operations — cold-start connect (can take 60-120s for npx/uvx installs) and per-request tool calls (should be fast). Now split:
+
+| Operation | Before | After |
+|---|---|---|
+| Cold-start connect (`connect()`) | 30s | **90s** |
+| Tool call (`call_tool()`) | 30s | **20s** |
+
+`connect()` now returns `bool` — callers check if actually connected instead of printing blindly.
+
+### Semgrep Pinned Ruleset
+
+`--config=auto` triggers a network call to Semgrep's rule registry on every invocation. Changed to `--config=p/security-audit` — no registry lookup, ~5s faster, more reliable.
+
+### GitHub Cache Stampede Fix
+
+`fetch_all_repos()` was TTL-cached but not lock-protected. Two near-simultaneous commands could both miss the cache and double-hit GitHub. Added `threading.Lock()` to `@cached` decorator.
+
+### LLM 503 Retry
+
+On boot, llama-server returns 503 "model still loading" for the first few seconds. Now retries once with 3s sleep instead of failing immediately.
+
+### Public Repo Access Without Token
+
+Removed `if not GITHUB_TOKEN: return None` guards from `fetch_github_issue`, `fetch_repo_issues`, `fetch_repo_prs`. Public repos work fine without a token (60 req/hr unauthenticated). Private repos get a 404 with a hint to set `GITHUB_TOKEN`.
+
+### Files Changed
+
+| File | Changes |
+|---|---|
+| `services/mcp_client.py` | `_CONNECT_TIMEOUT=90`, `_CALL_TIMEOUT=20`; `_run_async` accepts timeout param; `connect()` returns bool; `setup_mcp_servers` checks result |
+| `services/codereview_service.py` | `--config=auto` → `--config=p/security-audit`; timeout 25→30 |
+| `services/github_service.py` | Added `threading.Lock` to cache; removed token guards for public repos; 404 hint |
+| `services/llm_service.py` | Added `import time`; retry once on 503 with 3s sleep |
+
+---
+
 ## Real-Time Search Feature
 
 ### Date: 2026-07-08

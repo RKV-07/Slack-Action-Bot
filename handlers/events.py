@@ -80,6 +80,7 @@ def handle_app_mention(event: dict, client, say, context: dict = None):
     clean_msg = re.sub(r'<@[A-Za-z0-9]+>', '', raw_text).strip()
 
     print(f"[Mention] user={user_id}, channel={channel_id}, raw='{clean_msg}'")
+    print(f"[Mention] action_token present: {bool(event.get('action_token'))}")
 
     # Try thread first
     original_msg, thread_messages = fetch_thread_messages(client, channel_id, event["ts"])

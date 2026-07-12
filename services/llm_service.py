@@ -1,3 +1,4 @@
+import time
 import requests
 import logging
 from config import (
@@ -55,6 +56,11 @@ def _local_completion(user_msg: str, max_tokens: int = 500, system_msg: str = No
     }
     try:
         resp = requests.post(url, json=data, timeout=90)
+        # Retry once on 503 (model still loading at boot)
+        if resp.status_code == 503:
+            print("[LLM] 503 — model still loading, retrying in 3s...")
+            time.sleep(3)
+            resp = requests.post(url, json=data, timeout=90)
         if resp.status_code == 200:
             result = resp.json()
             if not result or not isinstance(result, dict) or "choices" not in result:

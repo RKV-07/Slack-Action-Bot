@@ -1,5 +1,6 @@
 import re
 import difflib
+import threading
 import requests
 from typing import Optional
 from cachetools import TTLCache, cached
@@ -73,9 +74,10 @@ def extract_repo_from_text(text: str) -> Optional[str]:
 
 
 _repo_cache = TTLCache(maxsize=1, ttl=120)
+_repo_cache_lock = threading.Lock()
 
 
-@cached(_repo_cache)
+@cached(_repo_cache, lock=_repo_cache_lock)
 def fetch_all_repos() -> list[dict]:
     """Fetch all repos the token has access to (cached 2 min)."""
     if not GITHUB_TOKEN:
@@ -113,10 +115,6 @@ def fetch_all_repos() -> list[dict]:
 
 
 def fetch_github_issue(repo: str, issue_number: int) -> Optional[dict]:
-    if not GITHUB_TOKEN:
-        print("[GitHub] GITHUB_TOKEN not set")
-        return None
-
     url = f"{_GITHUB_API}/repos/{repo}/issues/{issue_number}"
     try:
         resp = requests.get(url, headers=_headers(), timeout=10)
@@ -136,6 +134,8 @@ def fetch_github_issue(repo: str, issue_number: int) -> Optional[dict]:
                 "repo": repo,
             }
         print(f"[GitHub] {repo}#{issue_number}: HTTP {resp.status_code}")
+        if resp.status_code == 404 and not GITHUB_TOKEN:
+            print(f"[GitHub] 404 may mean this is a private repo — set GITHUB_TOKEN in .env")
     except requests.RequestException as e:
         print(f"[GitHub] Error fetching {repo}#{issue_number}: {e}")
     return None
@@ -222,11 +222,7 @@ def fetch_latest_prs(count: int = 5) -> list[dict]:
 
 
 def fetch_repo_issues(repo: str, count: int = 5) -> list[dict]:
-    """Fetch latest issues from a specific repo."""
-    if not GITHUB_TOKEN:
-        print("[GitHub] GITHUB_TOKEN not set")
-        return []
-
+    """Fetch latest issues from a specific repo. Works for public repos without a token."""
     url = f"{_GITHUB_API}/repos/{repo}/issues"
     params = {"state": "open", "per_page": count, "sort": "updated", "direction": "desc"}
 
@@ -255,11 +251,7 @@ def fetch_repo_issues(repo: str, count: int = 5) -> list[dict]:
 
 
 def fetch_repo_prs(repo: str, count: int = 5) -> list[dict]:
-    """Fetch latest PRs from a specific repo."""
-    if not GITHUB_TOKEN:
-        print("[GitHub] GITHUB_TOKEN not set")
-        return []
-
+    """Fetch latest PRs from a specific repo. Works for public repos without a token."""
     url = f"{_GITHUB_API}/repos/{repo}/pulls"
     params = {"state": "open", "per_page": count, "sort": "updated", "direction": "desc"}
 

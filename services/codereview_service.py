@@ -157,8 +157,8 @@ def _run_semgrep(pr_data: dict) -> list[dict]:
                 return []
 
             result = subprocess.run(
-                ["semgrep", "--config=auto", "--json", "--timeout=20", tmp_dir],
-                capture_output=True, text=True, timeout=25,
+                ["semgrep", "--config=p/security-audit", "--json", "--timeout=20", tmp_dir],
+                capture_output=True, text=True, timeout=30,
             )
             if result.stdout:
                 data = json.loads(result.stdout)
