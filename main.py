@@ -1,6 +1,6 @@
-def main():
-    print("Hello from slack-action-bot!")
+import os
+from dotenv import load_dotenv
 
 
-if __name__ == "__main__":
-    main()
+dir(os)
+dir(load_dotenv)
