@@ -7,6 +7,10 @@
 - **Daily digest**: `/sab digest subscribe|unsubscribe|demo` — proactive GitHub issues/PRs via APScheduler cron
 - **Duplicate detection**: `/sab duplicate owner/repo "title"` — difflib similarity over open issues
 - **Release notes**: `/sab release notes owner/repo` — LLM-grouped notes from merged PRs
+- **Real-Time Search**: `/sab search <query>` or `@bot find discussions about X` — cross-channel search via Slack RTS API
+- **MCP integration**: 3 MCP servers (GitHub, Fetch, custom Slack) with AsyncExitStack, background loop, split timeouts
+- **Semgrep grounding**: Real static analysis in security reviews with pinned ruleset
+- **Public repo access**: GitHub lookups work without `GITHUB_TOKEN` for public repos
 
 ### Bug Fixes
 - Learn MCP footer always showed REST fallback — `learn_via_mcp` now threaded through BotState
@@ -17,6 +21,13 @@
 
 ### Tests
 - 20+ new unit/E2E tests for risk score, footer formatting, LLM provider, and new commands
+- Updated `test_no_token_returns_none` — public repos now work without token
+- Fixed `route_after_classification` tests for duplicate/digest/search/release_notes routes
+- Added `md_to_slack_mrkdwn` tests (bold, links, bare URLs, double-wrap safety)
+- Added `build_initial_state` tests for `action_token` and `search_query` fields
+- Added `search_node`, `digest_node`, `duplicate_check_node`, `release_notes_node` unit tests
+- Added `TestE2ESearch` end-to-end tests (empty query, results, error, natural language, action_token)
+- All **225 tests passing** (168 unit + 57 e2e)
 
 ---
 
@@ -113,8 +124,8 @@
 - `detect_github_refs` drops bare `#123`
 
 ### Tests
-- 131 unit tests + 45 end-to-end tests = **176 passing**
-- Coverage: classify_intent, github_service, codereview_service, llm_service, learn_service, reminder_service, mcp_slack_server, slack_summarize_service, graph nodes, workflow, handlers
+- 168 unit tests + 57 end-to-end tests = **225 passing**
+- Coverage: classify_intent, github_service, codereview_service, llm_service, learn_service, reminder_service, mcp_slack_server, slack_summarize_service, graph nodes, workflow, handlers, search_node, digest_node, duplicate_check_node, release_notes_node
 
 ---
 

@@ -121,8 +121,8 @@ Slack-Action-Bot/
 │   ├── slack_search_service.py   # Real-time search via assistant.search.context
 │   └── slack_features.py        # Processing reaction decorator
 ├── reminders.db                 # SQLite persistent reminders
-├── test_all.py                  # 131 unit tests
-├── test_e2e.py                  # 45 end-to-end tests
+├── test_all.py                  # 168 unit tests
+├── test_e2e.py                  # 57 end-to-end tests
 └── pyproject.toml               # Dependencies (uv-managed)
 ```
 

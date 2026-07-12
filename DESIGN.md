@@ -138,7 +138,7 @@ class BotState(TypedDict):
         "context", "reminder", "github", "mention",
         "latest_github", "greeting", "test_llm", "help", "chat",
         "learn", "codereview", "reminder_list", "reminder_cancel",
-        "digest", "duplicate", "release_notes",
+        "digest", "duplicate", "release_notes", "search",
     ]
     action_context: Optional[ActionContext]
     reminder_data: Optional[ReminderData]

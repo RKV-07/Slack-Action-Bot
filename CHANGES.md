@@ -57,7 +57,7 @@ handlers/events.py (strips mention tag, dedup guard on event_ts)
        ▼
 graph/workflow.py (LangGraph StateGraph)
        ▼
-graph/nodes.py (classify_intent — 12 routes)
+graph/nodes.py (classify_intent — 15 routes)
        ▼
 ┌─────────────────────────────────────┐
 │ greeting? → build_greeting_response │
