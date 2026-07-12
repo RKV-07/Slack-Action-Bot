@@ -206,6 +206,33 @@ Removed `if not GITHUB_TOKEN: return None` guards from `fetch_github_issue`, `fe
 
 ---
 
+## Real-Time Search Routing Fix
+
+### Date: 2026-07-12
+
+### Missing Route: `"search": "search"` in `route_after_classification`
+
+`classify_intent` correctly set `command_type = "search"`, but `route_after_classification`'s `routes` dict had no matching key. `.get(cmd, "help_response")` silently fell back to help every time — search never actually ran.
+
+**One-line fix in `graph/workflow.py`:**
+```python
+routes = {
+    ...
+    "release_notes": "release_notes",
+    "search": "search",  # ← was missing
+}
+```
+
+This was the real reason `@bot find discussions about X` returned the help menu — not scopes, not Assistant toggle, not auth. The search code was correct all along; it just never got called.
+
+### Files Changed
+
+| File | Changes |
+|---|---|
+| `graph/workflow.py` | Added `"search": "search"` to `route_after_classification` |
+
+---
+
 ## Real-Time Search Feature
 
 ### Date: 2026-07-08

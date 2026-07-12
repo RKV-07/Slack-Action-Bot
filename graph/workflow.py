@@ -52,6 +52,7 @@ def route_after_classification(state: BotState) -> str:
         "digest": "digest",
         "duplicate": "duplicate_check",
         "release_notes": "release_notes",
+        "search": "search",
     }
     return routes.get(cmd, "help_response")
 
