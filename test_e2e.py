@@ -490,10 +490,17 @@ class TestE2EStateIntegrity:
             "llm_summary", "thread_messages", "max_messages",
             "learn_topic", "learn_resources", "learn_path",
             "review_pr_data", "review_security", "review_performance",
-            "review_best_practices",
+            "review_best_practices", "review_warning",
+            "review_via_mcp", "review_semgrep_findings",
+            "action_token", "search_query",
         ]
         for field in required_fields:
             assert field in result, f"Missing field: {field}"
+
+    @patch("services.llm_service._chat_completion", return_value="hi!")
+    def test_search_query_preserved(self, mock_llm):
+        result = invoke("search deployment planning")
+        assert result["search_query"] == "deployment planning"
 
     @patch("services.llm_service._chat_completion", return_value="ok")
     def test_user_id_preserved(self, mock_llm):
@@ -523,6 +530,44 @@ class TestE2EConcurrent:
         assert r3["command_type"] == "chat"
         # Each should have its own response
         assert r1["response_message"] != r2["response_message"]
+
+
+# ══════════════════════════════════════════════════════════════════
+# SEARCH (real-time)
+# ══════════════════════════════════════════════════════════════════
+
+class TestE2ESearch:
+    def test_search_empty_query(self):
+        result = invoke("search")
+        assert "Usage" in result["response_message"]
+
+    @patch("services.slack_search_service.summarize_search_results", return_value="Found deployment discussions")
+    @patch("services.slack_search_service.search_slack_context")
+    def test_search_with_results(self, mock_search, mock_summarize):
+        mock_search.return_value = {"messages": [{"text": "deploy tonight"}, {"text": "deploy tomorrow"}]}
+        result = invoke("search deployment")
+        assert result["command_type"] == "search"
+        assert "Found" in result["response_message"] or "deployment" in result["response_message"]
+
+    @patch("services.slack_search_service.search_slack_context")
+    def test_search_error(self, mock_search):
+        mock_search.return_value = {"error": "missing_scope: search:read"}
+        result = invoke("search deployment")
+        assert "missing_scope" in result["response_message"]
+
+    @patch("services.slack_search_service.summarize_search_results", return_value="Results here")
+    @patch("services.slack_search_service.search_slack_context")
+    def test_search_natural_language(self, mock_search, mock_summarize):
+        mock_search.return_value = {"messages": [{"text": "deployment discussion"}]}
+        result = invoke("find discussions about deployment", thread_messages=[])
+        assert result["command_type"] == "search"
+
+    @patch("services.slack_search_service.summarize_search_results", return_value="Results")
+    @patch("services.slack_search_service.search_slack_context")
+    def test_search_with_action_token(self, mock_search, mock_summarize):
+        mock_search.return_value = {"messages": []}
+        result = invoke("search testing", action_token="xwablack")
+        assert result["command_type"] == "search"
 
 
 if __name__ == "__main__":

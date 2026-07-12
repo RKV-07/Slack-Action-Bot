@@ -231,9 +231,11 @@ class TestFetchGithubIssue:
         assert fetch_github_issue("fmhy/edit", 99999) is None
 
     def test_no_token_returns_none(self):
+        """Public repos now work without token — this should succeed."""
         from services.github_service import fetch_github_issue
         with patch("services.github_service.GITHUB_TOKEN", None):
-            assert fetch_github_issue("fmhy/edit", 1) is None
+            result = fetch_github_issue("fmhy/edit", 1)
+            assert result is not None
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1157,6 +1159,152 @@ class TestGraphIntegration:
 # v2.1: Risk score, footer, learn_via_mcp, LLM provider, features
 # ══════════════════════════════════════════════════════════════════
 
+class TestMdToSlackMrkdwn:
+    def test_bold_conversion(self):
+        from handlers.shared import md_to_slack_mrkdwn
+        assert md_to_slack_mrkdwn("**bold**") == "*bold*"
+
+    def test_underscore_bold_conversion(self):
+        from handlers.shared import md_to_slack_mrkdwn
+        assert md_to_slack_mrkdwn("__bold__") == "*bold*"
+
+    def test_link_conversion(self):
+        from handlers.shared import md_to_slack_mrkdwn
+        assert md_to_slack_mrkdwn("[text](https://example.com)") == "<https://example.com|text>"
+
+    def test_bare_url_wrapped(self):
+        from handlers.shared import md_to_slack_mrkdwn
+        result = md_to_slack_mrkdwn("Visit https://example.com for info")
+        assert "<https://example.com>" in result
+        assert "https://example.com" not in result.replace("<https://example.com>", "")
+
+    def test_already_wrapped_url_not_double_wrapped(self):
+        from handlers.shared import md_to_slack_mrkdwn
+        assert md_to_slack_mrkdwn("<https://example.com>") == "<https://example.com>"
+
+    def test_empty_text(self):
+        from handlers.shared import md_to_slack_mrkdwn
+        assert md_to_slack_mrkdwn("") == ""
+        assert md_to_slack_mrkdwn(None) is None
+
+
+class TestBuildInitialStateSearchFields:
+    def test_action_token_default(self):
+        from handlers.shared import build_initial_state
+        state = build_initial_state(user_id="U1", channel_id="C1", message_ts="1", raw_input="hi")
+        assert state["action_token"] == ""
+        assert state["search_query"] == ""
+
+    def test_action_token_passed(self):
+        from handlers.shared import build_initial_state
+        state = build_initial_state(user_id="U1", channel_id="C1", message_ts="1", raw_input="hi", action_token="tok123")
+        assert state["action_token"] == "tok123"
+
+
+class TestSearchRouting:
+    def test_search_route(self):
+        from graph.workflow import route_after_classification
+        assert route_after_classification({"command_type": "search"}) == "search"
+
+    def test_search_in_routes(self):
+        from graph.workflow import route_after_classification
+        assert route_after_classification({"command_type": "digest"}) == "digest"
+        assert route_after_classification({"command_type": "duplicate"}) == "duplicate_check"
+        assert route_after_classification({"command_type": "release_notes"}) == "release_notes"
+
+
+class TestSearchNode:
+    def test_empty_query_shows_usage(self):
+        from graph.nodes import search_node
+        state = {"search_query": "", "action_token": "", "response_message": ""}
+        result = search_node(state)
+        assert "Usage" in result["response_message"]
+
+    @patch("services.slack_search_service.search_slack_context")
+    def test_error_returns_error(self, mock_search):
+        from graph.nodes import search_node
+        mock_search.return_value = {"error": "missing_scope: search:read"}
+        state = {"search_query": "deployment", "action_token": "tok", "response_message": ""}
+        result = search_node(state)
+        assert "missing_scope" in result["response_message"]
+
+    @patch("services.slack_search_service.summarize_search_results", return_value="Found 3 results")
+    @patch("services.slack_search_service.search_slack_context")
+    def test_success_returns_summary(self, mock_search, mock_summarize):
+        from graph.nodes import search_node
+        mock_search.return_value = {"messages": [{"text": "msg1"}, {"text": "msg2"}]}
+        state = {"search_query": "deployment", "action_token": "tok", "response_message": ""}
+        result = search_node(state)
+        assert result["response_message"] == "Found 3 results"
+
+
+class TestDigestNode:
+    def test_subscribe(self):
+        from graph.nodes import digest_node
+        state = {"raw_input": "digest subscribe", "channel_id": "C1", "response_message": ""}
+        with patch("services.reminder_service.schedule_daily_digest"):
+            result = digest_node(state)
+            assert "subscribed" in result["response_message"].lower()
+
+    def test_unsubscribe(self):
+        from graph.nodes import digest_node
+        state = {"raw_input": "digest unsubscribe", "channel_id": "C1", "response_message": ""}
+        with patch("services.reminder_service.cancel_daily_digest", return_value=True):
+            result = digest_node(state)
+            assert "cancelled" in result["response_message"].lower()
+
+    def test_usage(self):
+        from graph.nodes import digest_node
+        state = {"raw_input": "digest", "channel_id": "C1", "response_message": ""}
+        result = digest_node(state)
+        assert "Usage" in result["response_message"]
+
+
+class TestDuplicateCheckNode:
+    def test_no_ref_shows_usage(self):
+        from graph.nodes import duplicate_check_node
+        state = {"raw_input": "duplicate", "response_message": ""}
+        result = duplicate_check_node(state)
+        assert "Usage" in result["response_message"]
+
+    def test_no_title_shows_usage(self):
+        from graph.nodes import duplicate_check_node
+        state = {"raw_input": "duplicate owner/repo", "response_message": ""}
+        result = duplicate_check_node(state)
+        assert "Usage" in result["response_message"]
+
+    @patch("graph.nodes.find_similar_issues")
+    def test_no_matches(self, mock_find):
+        from graph.nodes import duplicate_check_node
+        mock_find.return_value = []
+        state = {'raw_input': 'duplicate owner/repo "fix login"', "response_message": ""}
+        result = duplicate_check_node(state)
+        assert "No likely duplicates" in result["response_message"]
+
+    @patch("graph.nodes.find_similar_issues")
+    def test_matches_found(self, mock_find):
+        from graph.nodes import duplicate_check_node
+        mock_find.return_value = [{"score": 0.87, "title": "Fix login", "url": "http://1", "number": 42}]
+        state = {'raw_input': 'duplicate owner/repo "fix login"', "response_message": ""}
+        result = duplicate_check_node(state)
+        assert "87%" in result["response_message"]
+
+
+class TestReleaseNotesNode:
+    def test_no_repo_shows_usage(self):
+        from graph.nodes import release_notes_node
+        state = {"raw_input": "release notes", "response_message": ""}
+        result = release_notes_node(state)
+        assert "Usage" in result["response_message"]
+
+    @patch("services.release_service.generate_release_notes", return_value="## Features\n- New thing")
+    def test_generates_notes(self, mock_gen):
+        from graph.nodes import release_notes_node
+        state = {"raw_input": "release notes owner/repo", "response_message": ""}
+        result = release_notes_node(state)
+        assert "Features" in result["response_message"]
+
+
 class TestRiskScore:
     def test_high_risk_past_200_chars(self):
         from services.codereview_service import _risk_score
@@ -1171,6 +1319,16 @@ class TestRiskScore:
     def test_low_default(self):
         from services.codereview_service import _risk_score
         assert _risk_score("Risk Level: Low") == "🟢 Low"
+
+    def test_medium_with_semgrep_warning(self):
+        from services.codereview_service import _risk_score
+        findings = [{"severity": "WARNING"}]
+        assert _risk_score("no issues", findings) == "🟡 Medium"
+
+    def test_medium_in_text(self):
+        from services.codereview_service import _risk_score
+        text = "x" * 300 + "Risk Level: Medium"
+        assert _risk_score(text) == "🟡 Medium"
 
 
 class TestMergeReviewsFormatting:
