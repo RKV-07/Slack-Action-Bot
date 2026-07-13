@@ -106,6 +106,7 @@ A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local 
 | Local Qwen3-8B | Zero API cost, fast inference, no rate limits, no data leaves machine |
 | Dual LLM (`LLM_PROVIDER`) | Local Qwen3 primary; Gemini cross-fallback when `LLM_FALLBACK_ENABLED=true` |
 | `/no_think` prefix | Qwen3 returns reasoning in `reasoning_content` field; prefix bypasses |
+| `-c 16384` context | Full context per slot for codereview/learn prompts (8192 too small) |
 | MCP primary, direct API fallback | Extensible tool access, graceful degradation |
 | `difflib` fuzzy matching | Typo tolerance without new dependencies |
 | SQLite jobstore | Reminders survive bot restarts |
@@ -127,6 +128,7 @@ A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local 
 | Values over globals | Thread-safe: `via_mcp`, `semgrep_findings` threaded through BotState |
 | Slack Real-Time Search | Cross-channel search via `assistant.search.context` with graceful fallback |
 | LLM 503 retry | Retries once on model loading (transient at boot) |
+| Context size boot check | `check_llm_context_size()` verifies `n_ctx ≥ 16384` at boot, warns if too small |
 
 ## BotState TypedDict
 

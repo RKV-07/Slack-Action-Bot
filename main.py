@@ -126,6 +126,12 @@ def on_mention(event, say, client, logger, context):
 def start():
     atexit.register(shutdown_scheduler)
     atexit.register(_cleanup_mcp)
+    # Check LLM context size at boot — fails loud instead of silent 400s later
+    try:
+        from services.llm_service import check_llm_context_size
+        check_llm_context_size()
+    except Exception as e:
+        print(f"[LLM] Context size check failed: {e}")
     # Initialize MCP servers in background thread so bot boots immediately
     if MCP_GITHUB_ENABLED or MCP_FETCH_ENABLED or MCP_SLACK_ENABLED:
         t = threading.Thread(target=init_mcp_servers, daemon=True)

@@ -130,7 +130,14 @@ Slack-Action-Bot/
 
 1. Start llama-server with Qwen3-8B:
    ```bash
-   llama-server -m models/qwen3-8b-q4_k_m.gguf --port 8080 --parallel 4 -c 16384
+   cd ~/llama.cpp
+   ./build/bin/llama-server \
+     -m <path-to>/Qwen3-8B-Q4_K_M.gguf \
+     -ngl 999 \
+     -c 16384 \
+     --parallel 4 \
+     --host 0.0.0.0 \
+     --port 8080
    ```
 
 2. Copy `.env.example` to `.env` and fill in:
