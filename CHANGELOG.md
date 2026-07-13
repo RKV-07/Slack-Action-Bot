@@ -13,6 +13,7 @@
 - **Public repo access**: GitHub lookups work without `GITHUB_TOKEN` for public repos
 
 ### Bug Fixes
+- **LLM context size boot check**: `check_llm_context_size()` verifies llama-server has ≥16384 tokens at boot. Warns loudly if `-c` flag is missing — prevents silent HTTP 400 cascading failures
 - Learn MCP footer always showed REST fallback — `learn_via_mcp` now threaded through BotState
 - Natural-language reminder text left `"me to"` connector words — stripped in dateparser branch
 - Codereview showed fake reviews when LLM failed — visible warning banner when 2+ fallback strings detected

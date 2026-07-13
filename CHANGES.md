@@ -12,6 +12,23 @@ Converted the Slack bot from Google Gemini API to a local Qwen3-8B model running
 - `LLM_FALLBACK_ENABLED=true` — automatic cross-fallback when primary fails
 - `check_local_llm()` / `check_gemini_llm()` for `/sab test` diagnostics
 
+### LLM Context Size Boot Check
+- `check_llm_context_size()` verifies llama-server has ≥16384 tokens at boot
+- Calls `GET /props` endpoint to read `n_ctx` from running server
+- Warns loudly if `-c` flag is missing — prevents silent HTTP 400 cascading failures
+- Called once in `main.py` `start()` before MCP init
+- Restart llama-server with `-c 16384`:
+  ```bash
+  cd ~/llama.cpp
+  ./build/bin/llama-server \
+    -m <path-to>/Qwen3-8B-Q4_K_M.gguf \
+    -ngl 999 \
+    -c 16384 \
+    --parallel 4 \
+    --host 0.0.0.0 \
+    --port 8080
+  ```
+
 ### New Commands
 - `/sab digest subscribe|unsubscribe|demo` — daily GitHub digest via APScheduler cron
 - `/sab duplicate owner/repo "title"` — difflib similarity over open issues
@@ -86,6 +103,23 @@ Response to Slack
 
 ### System Diagnostics
 `/sab test` — checks LLM + all 3 MCP sessions
+
+### LLM Context Size Check
+At boot, `check_llm_context_size()` calls `GET /props` on llama-server and warns if context is too small:
+```
+[LLM] Context size: 16384 tokens (OK)
+```
+If you see a warning, restart llama-server with `-c 16384`:
+```bash
+cd ~/llama.cpp
+./build/bin/llama-server \
+  -m <path-to>/Qwen3-8B-Q4_K_M.gguf \
+  -ngl 999 \
+  -c 16384 \
+  --parallel 4 \
+  --host 0.0.0.0 \
+  --port 8080
+```
 
 ### Greetings
 `hi`, `hey`, `hello`, `what can you do`

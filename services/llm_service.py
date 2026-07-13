@@ -150,6 +150,27 @@ def check_local_llm() -> bool:
     return bool(_local_completion("Say OK", max_tokens=5))
 
 
+def check_llm_context_size(min_expected: int = 16384):
+    """Check llama-server context size at boot. Warns if too small for codereview/learn."""
+    try:
+        resp = requests.get(f"{LLAMA_BASE_URL}/props", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            n_ctx = (
+                data.get("n_ctx")
+                or data.get("default_generation_settings", {}).get("n_ctx")
+            )
+            if n_ctx and n_ctx < min_expected:
+                print(
+                    f"[LLM] WARNING: context is {n_ctx} tokens, expected ≥{min_expected}. "
+                    f"Restart llama-server with: llama-server -m <model> --port 8080 -c 16384"
+                )
+            elif n_ctx:
+                print(f"[LLM] Context size: {n_ctx} tokens (OK)")
+    except Exception as e:
+        print(f"[LLM] Could not verify context size: {e}")
+
+
 def check_gemini_llm() -> bool:
     return bool(_gemini_completion("Say OK", max_tokens=5)) if GOOGLE_API_KEY else False
 
