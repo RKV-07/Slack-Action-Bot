@@ -1,0 +1,465 @@
+# Slack Bot Architecture Documentation
+
+## Overview
+
+This is a production-grade multi-agent AI assistant built with **Slack Bolt Framework**, **LangGraph**, and **MCP (Model Context Protocol)** servers. The bot handles 12 different intent types through a state-machine workflow, executing specialized services for each use case.
+
+---
+
+## Architecture Layers
+
+### Layer 1: Slack App (Bolt Framework)
+**File:** `main.py`
+
+Entry point for all Slack interactions. Three event handlers capture incoming messages:
+
+| Handler | Trigger | Deduplication | Purpose |
+|---------|---------|----------------|---------|
+| `/sab` Command | Slash command | `trigger_id` | Quick commands |
+| `@app_mention` | Bot mentioned | `event_ts` | Conversational triggers |
+| `@message` | Regular message | `event_ts` | Context-aware responses |
+
+**Key Features:**
+- **Socket Mode (WebSocket):** Real-time bidirectional connection to Slack
+- **Deduplication:** Prevents processing the same event twice (critical for retry scenarios)
+- **Background MCP Init:** Lazy-loads MCP servers on first use (async thread)
+- **Middleware Chain:** Implements processing reaction decorator for UI feedback
+
+```python
+# Example structure
+@app.command("/sab")
+def handle_sab_command(ack, command, client):
+    ack()  # Acknowledge immediately
+    # Dedup on trigger_id
+    # Send to workflow
+```
+
+---
+
+### Layer 2: Workflow Engine (LangGraph)
+**File:** `graph/workflow.py`
+
+State machine with 12 conditional routes for intent classification:
+
+```
+Classify Intent (Entry Point)
+    ├── 📌 Reminder → parse → schedule/list/cancel
+    ├── 🐙 GitHub → extract repo → fetch PRs/issues → format
+    ├── 📚 Context → summarize conversation → respond
+    ├── 🔍 Learn → search (Tavily + GitHub) → structure → respond
+    ├── 🔐 CodeReview → fetch code → [security, perf, best] → merge
+    ├── ❓ Help → predefined responses
+    ├── 💬 Greeting → friendly messages
+    ├── 💬 Chat → direct LLM call
+    └── 🧪 test_llm → test model capabilities
+```
+
+**Architecture Pattern:**
+- **StateGraph:** Nodes represent processing steps
+- **Conditional Routing:** Edge conditions based on classified intent
+- **Lazy Evaluation:** Each route only executes if matched
+- **Error Handling:** Fallback to chat/help routes on unrecognized intent
+
+```python
+# Pseudocode structure
+builder = StateGraph(AgentState)
+builder.add_node("classify", classify_node)
+builder.add_node("reminder", reminder_node)
+builder.add_node("github", github_node)
+# ... 10 more nodes
+
+builder.add_conditional_edges(
+    "classify",
+    route_intent,
+    {
+        "reminder": "reminder",
+        "github": "github",
+        # ...
+    }
+)
+```
+
+---
+
+### Layer 3: Backend Services
+**Directory:** `services/`
+
+Modular, independently scalable service layer:
+
+#### **llm_service.py**
+- **Model:** Qwen3-8B (8B parameter language model)
+- **Endpoint:** localhost:8080 (local inference server)
+- **Tasks:** Classification, summarization, synthesis, code analysis
+- **Features:** Prompt caching, temperature tuning, token limits
+
+```python
+response = llm_service.generate(
+    prompt=user_input,
+    temperature=0.7,
+    max_tokens=1024
+)
+```
+
+#### **github_service.py**
+- **API:** GitHub REST v3
+- **Caching:** TTL-based cache to reduce API calls
+- **Rate Limiting:** Tracks quota, exponential backoff
+- **Operations:** List repos, fetch PRs/issues, read file contents
+
+```python
+repos = github_service.list_user_repos(cache_ttl=3600)
+pr = github_service.get_pr(owner, repo, pr_number)
+```
+
+#### **codereview_service.py**
+- **Tools:** Semgrep (static analysis) + 3 LLM subagents
+- **Subagents:**
+  1. **Security Agent** → OWASP/CWE vulnerabilities
+  2. **Performance Agent** → Time/space complexity, bottlenecks
+  3. **Best Practices Agent** → Style, design patterns, maintainability
+- **Output:** Unified review merging all perspectives
+
+```python
+review = codereview_service.review_code(
+    code=code_snippet,
+    language="python"
+)
+# Returns: {security: [...], performance: [...], best_practices: [...]}
+```
+
+#### **learn_service.py**
+- **Search:** Tavily API (web search) + GitHub repo search
+- **Synthesis:** LLM structures findings into learning resources
+- **Output:** Categorized resources with summaries and links
+
+```python
+resources = learn_service.research_topic(
+    query="async patterns in Python",
+    return_format="structured"
+)
+```
+
+#### **reminder_service.py**
+- **Storage:** SQLite database (persistent, local)
+- **Scheduling:** APScheduler (cron-like scheduling)
+- **Operations:** Parse natural language → schedule → list → cancel
+- **Execution:** Background threads for scheduled reminders
+
+```python
+reminder_service.schedule(
+    user_id="U12345",
+    time="2026-07-14 10:00",
+    message="Review PR #42"
+)
+```
+
+#### **mcp_client.py**
+- **MCP Servers:** GitHub, Fetch, Slack
+- **Pattern:** Tool-use abstraction layer
+- **Benefits:** Standardized API across diverse tools
+- **Lazy Init:** Servers initialized in background thread on first use
+
+```python
+# Simplified
+result = mcp_client.call_tool(
+    server="github",
+    tool="list_issues",
+    args={...}
+)
+```
+
+---
+
+## Data Flow (End-to-End)
+
+```
+User sends: "/sab research async patterns"
+    ↓
+Socket Mode WebSocket → Bolt Framework
+    ↓
+/sab Command Handler
+    ├─ Acknowledge immediately (ack)
+    ├─ Extract trigger_id for dedup
+    ├─ Send processing_reaction (⏳) to Slack
+    └─ Launch async task
+    ↓
+Async Task
+    ├─ Call workflow.compile() → LangGraph executor
+    └─ Pass input state to graph
+    ↓
+LangGraph StateGraph
+    ├─ Classify Intent Node
+    │  └─ LLM determines: intent="learn"
+    ├─ Route to Learn Node
+    └─ Learn Node executes:
+        ├─ learn_service.research_topic("async patterns")
+        ├─ Search via Tavily API + GitHub
+        ├─ Synthesize findings with LLM
+        └─ Format as structured resources
+    ↓
+Response Formatting
+    ├─ Convert structured output to Slack blocks
+    ├─ Add links, code snippets, summaries
+    └─ Split if >4000 chars (Slack limit)
+    ↓
+Slack Reply
+    └─ Send via client.chat_postMessage() → User DM/Thread/Channel
+```
+
+---
+
+## Deduplication Strategy
+
+### Command Dedup: `trigger_id`
+```python
+# Slack guarantees trigger_id uniqueness per command
+# Store in Redis/SQLite with TTL
+if dedup.exists(trigger_id):
+    return  # Already processed
+dedup.set(trigger_id, "processing", ttl=3600)
+```
+
+### Event Dedup: `event_ts`
+```python
+# Slack may retry events with same event_ts
+# Deduplicate by (event_ts, user_id, channel_id)
+key = f"{event_ts}:{user_id}:{channel_id}"
+if dedup.exists(key):
+    return  # Already processed
+```
+
+---
+
+## MCP Integration
+
+### What is MCP?
+Model Context Protocol: Standardized interface for tools and data sources. Decouples AI agents from specific tool implementations.
+
+### MCP Servers in Use
+
+| Server | Purpose | Tools |
+|--------|---------|-------|
+| **GitHub MCP** | Repository operations | list_repos, get_pr, create_issue, read_file |
+| **Fetch MCP** | HTTP requests | fetch_url, parse_html, scrape_content |
+| **Slack MCP** | Slack operations | send_message, update_message, get_user_info |
+
+### Lazy Initialization
+```python
+# On first intent requiring MCP tools
+@app.message()
+def on_message(message):
+    # Trigger background thread to init MCP
+    if not mcp_initialized:
+        initialize_mcp_async()  # Non-blocking
+    # MCP ready by time service needs it
+```
+
+---
+
+## Intent Routes (12 Types)
+
+### 1. Reminder
+**Trigger:** "remind me", "schedule", "at 3pm"
+**Process:**
+```
+Input → NLP Parse (extract time + message)
+      → APScheduler.add_job()
+      → Confirm to user
+```
+
+### 2. GitHub
+**Trigger:** "pr status", "repo activity", "issue list"
+**Process:**
+```
+Input → Extract (repo, owner, pr/issue id)
+      → github_service.fetch()
+      → Format results
+      → Reply with metadata
+```
+
+### 3. Context
+**Trigger:** "summarize", "what did we discuss"
+**Process:**
+```
+Input → Fetch conversation history
+      → LLM summarize
+      → Return structured summary
+```
+
+### 4. Learn
+**Trigger:** "explain", "how to", "best practices"
+**Process:**
+```
+Input → learn_service.research_topic()
+      → Tavily web search + GitHub search
+      → LLM synthesize
+      → Structure into resources
+```
+
+### 5. CodeReview
+**Trigger:** "review", "check code", "security"
+**Process:**
+```
+Input → Extract code snippet
+      → codereview_service.review()
+      ├─ Semgrep scan
+      ├─ Security agent
+      ├─ Performance agent
+      └─ Best practices agent
+      → Merge reviews
+      → Return unified report
+```
+
+### 6-7. Help & Greeting
+**Trigger:** "help", "hi", "what can you do"
+**Process:**
+```
+Predefined responses (no external calls)
+```
+
+### 8. Chat
+**Trigger:** Anything not matched above
+**Process:**
+```
+Input → llm_service.generate()
+      → Direct LLM response
+```
+
+### 9. test_llm
+**Trigger:** "test", "benchmark"
+**Process:**
+```
+Run latency + quality tests
+Report model performance
+```
+
+---
+
+## Styling & Visual Design
+
+### Color Scheme
+```
+Slack App Layer (Blue):     #e1f5ff background, #01579b border
+Workflow Engine (Purple):   #f3e5f5 background, #4a148c border
+Services Layer (Green):     #e8f5e9 background, #1b5e20 border
+External Integrations (Orange): #fff3e0 background, #e65100 border
+```
+
+### Icons
+- 🔌 WebSocket / Protocol
+- ⚡ Speed / Performance
+- 🎯 Intent / Target
+- 🦙 Llama / LLM
+- 🐙 GitHub
+- 🔐 Security / Code Review
+- 🔍 Search / Learning
+- 📌 Reminder / Schedule
+
+---
+
+## How to Use This Diagram
+
+### For Architecture Design Document
+```markdown
+# Architecture Overview
+![System Diagram](slack_bot_architecture.html)
+
+See [detailed documentation](ARCHITECTURE.md) for component descriptions.
+```
+
+### For DevPost Hackathon Submission
+1. **README.md:**
+   - Include Mermaid code block:
+   ```markdown
+   ```mermaid
+   [Paste the .mmd file content here]
+   ```
+   ```
+   - Add link to rendered HTML version
+
+2. **Screenshots:**
+   - Export diagram from mermaid.live as PNG
+   - Include in project gallery thumbnail
+
+3. **Technical Writeup:**
+   - Reference layer names (Bolt App, LangGraph, Services)
+   - Explain deduplication strategy
+   - Highlight unique features (MCP, 3-agent code review, Tavily search)
+
+---
+
+## Tech Stack Summary
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Event Handling** | Slack Bolt (Python) | WebSocket, event routing |
+| **Orchestration** | LangGraph | State machine, workflow |
+| **LLM** | Qwen3-8B | Local inference, Hugging Face |
+| **External APIs** | GitHub, Tavily | Data sources |
+| **Static Analysis** | Semgrep | Code security/quality |
+| **Scheduling** | APScheduler | Cron-like reminders |
+| **Storage** | SQLite | Reminder persistence |
+| **Protocol** | MCP | Tool abstraction |
+
+---
+
+## Performance Considerations
+
+1. **Caching:** GitHub API results cached (TTL=3600s)
+2. **Deduplication:** O(1) lookup with Redis/in-memory dict
+3. **Async Execution:** Long-running tasks (learn, code review) in background
+4. **MCP Lazy Init:** Servers initialized only once, in background thread
+5. **Local LLM:** No API latency for classification/synthesis
+6. **Rate Limiting:** Tracked and respected for all external APIs
+
+---
+
+## File Structure
+```
+.
+├── main.py                          # Bolt app entry point
+├── graph/
+│   └── workflow.py                  # LangGraph state machine
+├── services/
+│   ├── llm_service.py
+│   ├── github_service.py
+│   ├── codereview_service.py
+│   ├── learn_service.py
+│   ├── reminder_service.py
+│   └── mcp_client.py
+├── README.md                        # User docs
+└── ARCHITECTURE.md                  # This file
+```
+
+---
+
+## Rendering Instructions
+
+### Online (No Installation)
+1. Open [mermaid.live](https://mermaid.live)
+2. Paste content from `slack_bot_architecture.mmd`
+3. Export as PNG/SVG if needed
+
+### Local (VS Code)
+1. Install "Markdown Preview Mermaid Support" extension
+2. Open `ARCHITECTURE.md` → Preview
+3. View diagram inline
+
+### HTML Standalone
+1. Open `slack_bot_architecture.html` in browser
+2. Interactive diagram with legend and documentation
+
+---
+
+## Notes
+
+- **Mermaid Version:** Compatible with v10.9.0+ (latest)
+- **Syntax:** Flowchart with nested subgraphs, generalized shapes, markdown labels
+- **Colors:** Material Design palette for accessibility
+- **Responsive:** Adapts to mobile/desktop viewports
+
+---
+
+**Last Updated:** July 2026  
+**Status:** Production-Ready  
+**License:** [Your License Here]
