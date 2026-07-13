@@ -13,10 +13,14 @@ LLAMA_BASE_URL = os.environ.get("LLAMA_BASE_URL", "http://localhost:8080")
 LLAMA_PARALLEL = os.environ.get("LLAMA_PARALLEL")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 
-# LLM: local Qwen3 (primary default) with optional Gemini cross-fallback
+# LLM: local Qwen3 (primary default) with optional fallbacks
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "local").lower()
 LLM_FALLBACK_ENABLED = os.environ.get("LLM_FALLBACK_ENABLED", "true").lower() == "true"
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+
+# Remote models via OpenAI-compatible endpoint (qwen3.5-397b / glm-5.2)
+REMOTE_LLM_BASE_URL = os.environ.get("REMOTE_LLM_BASE_URL", "http://127.0.0.1:8000")
+REMOTE_LLM_MODEL = os.environ.get("REMOTE_LLM_MODEL", "glm-5.2")
 
 # MCP Server Configuration (MCP primary, direct API as fallback)
 MCP_GITHUB_ENABLED = os.environ.get("MCP_GITHUB_ENABLED", "true").lower() == "true"

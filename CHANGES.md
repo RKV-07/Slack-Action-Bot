@@ -8,9 +8,18 @@ Converted the Slack bot from Google Gemini API to a local Qwen3-8B model running
 ## v2.1 Updates (2026-07-12)
 
 ### Dual LLM Provider
-- `LLM_PROVIDER=local|gemini` — user-selectable primary (default: local Qwen3)
+- `LLM_PROVIDER=local|gemini|remote` — user-selectable primary (default: local Qwen3)
 - `LLM_FALLBACK_ENABLED=true` — automatic cross-fallback when primary fails
-- `check_local_llm()` / `check_gemini_llm()` for `/sab test` diagnostics
+- `check_local_llm()` / `check_gemini_llm()` / `check_remote_llm()` for `/sab test` diagnostics
+- Fallback chain: local → remote (qwen3.5-397b / glm-5.2) → gemini
+
+### Remote LLM (glm-5.2 / qwen3.5-397b)
+- OpenAI-compatible endpoint via [lucky-cat-api](https://github.com/KHROTU/lucky-cat-api)
+- `REMOTE_LLM_BASE_URL=http://127.0.0.1:8000`
+- `REMOTE_LLM_MODEL=glm-5.2` (200k context, great for coding/GitHub) or `qwen3.5-397b-a17b` (266k context)
+- Install: `uv sync --group remote-llm` (adds selenium, fastapi, uvicorn)
+- Start: `python lc_server.py` or `uvicorn lc_server:app --host 127.0.0.1 --port 8000`
+- Fallback: if remote unavailable, bot falls back to local Qwen3 → gemini`
 
 ### LLM Context Size Boot Check
 - `check_llm_context_size()` verifies llama-server has ≥16384 tokens at boot

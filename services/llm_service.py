@@ -3,7 +3,7 @@ import requests
 import logging
 from config import (
     LLAMA_BASE_URL, LLAMA_PARALLEL, LLM_PROVIDER, LLM_FALLBACK_ENABLED,
-    GOOGLE_API_KEY, GEMINI_MODEL,
+    GOOGLE_API_KEY, GEMINI_MODEL, REMOTE_LLM_BASE_URL, REMOTE_LLM_MODEL,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,10 +124,51 @@ def _gemini_completion(user_msg: str, max_tokens: int = 500, system_msg: str = N
         return ""
 
 
+def _remote_completion(user_msg: str, max_tokens: int = 500, system_msg: str = None) -> str:
+    """Call remote OpenAI-compatible endpoint (qwen3.5-397b / glm-5.2)."""
+    if not REMOTE_LLM_BASE_URL:
+        return ""
+
+    messages = []
+    if system_msg:
+        messages.append({"role": "system", "content": system_msg})
+    messages.append({"role": "user", "content": user_msg})
+
+    data = {
+        "model": REMOTE_LLM_MODEL,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.3,
+    }
+    try:
+        resp = requests.post(
+            f"{REMOTE_LLM_BASE_URL}/v1/chat/completions",
+            json=data,
+            timeout=90,
+        )
+        if resp.status_code == 200:
+            result = resp.json()
+            choices = result.get("choices", [])
+            if choices:
+                content = choices[0].get("message", {}).get("content", "")
+                return content.strip() if content else ""
+        print(f"[LLM] Remote API error: HTTP {resp.status_code} - {resp.text[:300]}")
+        return ""
+    except Exception as e:
+        print(f"[LLM] Remote error: {type(e).__name__}: {e}")
+        return ""
+
+
 def _chat_completion(user_msg: str, max_tokens: int = 500, system_msg: str = None) -> str:
-    """Dispatch to primary provider (local Qwen3 default), cross-fallback to Gemini if enabled."""
-    primary = LLM_PROVIDER if LLM_PROVIDER in ("local", "gemini") else "local"
-    primary_fn = _local_completion if primary == "local" else _gemini_completion
+    """Dispatch to primary provider with fallback chain: local → remote (glm-5.2) → gemini."""
+    _providers = {
+        "local": _local_completion,
+        "remote": _remote_completion,
+        "gemini": _gemini_completion,
+    }
+
+    primary = LLM_PROVIDER if LLM_PROVIDER in _providers else "local"
+    primary_fn = _providers[primary]
 
     result = primary_fn(user_msg, max_tokens, system_msg)
     if result:
@@ -136,18 +177,31 @@ def _chat_completion(user_msg: str, max_tokens: int = 500, system_msg: str = Non
     if not LLM_FALLBACK_ENABLED:
         return ""
 
-    fallback = "gemini" if primary == "local" else "local"
-    can_fallback = (fallback == "gemini" and GOOGLE_API_KEY) or (fallback == "local")
-    if not can_fallback:
-        return ""
+    # Fallback chain: try remaining providers
+    fallback_order = {
+        "local": ["remote", "gemini"],
+        "remote": ["local", "gemini"],
+        "gemini": ["local", "remote"],
+    }
+    for fallback in fallback_order.get(primary, ["remote", "gemini"]):
+        if fallback == "gemini" and not GOOGLE_API_KEY:
+            continue
+        if fallback == "remote" and not REMOTE_LLM_BASE_URL:
+            continue
+        print(f"[LLM] Primary {primary} failed, falling back to {fallback}")
+        result = _providers[fallback](user_msg, max_tokens, system_msg)
+        if result:
+            return result
 
-    print(f"[LLM] Primary {primary} failed, falling back to {fallback}")
-    fallback_fn = _gemini_completion if fallback == "gemini" else _local_completion
-    return fallback_fn(user_msg, max_tokens, system_msg)
+    return ""
 
 
 def check_local_llm() -> bool:
     return bool(_local_completion("Say OK", max_tokens=5))
+
+
+def check_remote_llm() -> bool:
+    return bool(_remote_completion("Say OK", max_tokens=5)) if REMOTE_LLM_BASE_URL else False
 
 
 def check_llm_context_size(min_expected: int = 16384):

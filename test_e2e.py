@@ -87,25 +87,28 @@ class TestE2EHelp:
 
 class TestE2ETestLLM:
     @patch("services.llm_service.check_local_llm", return_value=True)
+    @patch("services.llm_service.check_remote_llm", return_value=True)
     @patch("services.llm_service.check_gemini_llm", return_value=True)
     @patch("services.mcp_client.mcp_client.health_check", return_value=True)
-    def test_test_llm(self, mock_mcp, mock_gemini, mock_local):
+    def test_test_llm(self, mock_mcp, mock_gemini, mock_remote, mock_local):
         result = invoke("test")
         assert result["command_type"] == "test_llm"
         assert "Local LLM" in result["response_message"]
         assert "operational" in result["response_message"].lower()
 
     @patch("services.llm_service.check_local_llm", return_value=True)
+    @patch("services.llm_service.check_remote_llm", return_value=True)
     @patch("services.llm_service.check_gemini_llm", return_value=True)
     @patch("services.mcp_client.mcp_client.health_check", return_value=True)
-    def test_test_llm_variant(self, mock_mcp, mock_gemini, mock_local):
+    def test_test_llm_variant(self, mock_mcp, mock_gemini, mock_remote, mock_local):
         result = invoke("test llm")
         assert result["command_type"] == "test_llm"
 
     @patch("services.llm_service.check_local_llm", return_value=False)
+    @patch("services.llm_service.check_remote_llm", return_value=False)
     @patch("services.llm_service.check_gemini_llm", return_value=False)
     @patch("services.mcp_client.mcp_client.health_check", return_value=False)
-    def test_test_llm_failure(self, mock_mcp, mock_gemini, mock_local):
+    def test_test_llm_failure(self, mock_mcp, mock_gemini, mock_remote, mock_local):
         result = invoke("test")
         assert "✗" in result["response_message"]
         assert "hint" in result["response_message"].lower()

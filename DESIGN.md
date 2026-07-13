@@ -104,7 +104,8 @@ A Slack bot that uses **LangGraph** for agentic workflow orchestration, **local 
 |---|---|
 | LangGraph StateGraph | Structured routing, fan-out for parallel reviewers |
 | Local Qwen3-8B | Zero API cost, fast inference, no rate limits, no data leaves machine |
-| Dual LLM (`LLM_PROVIDER`) | Local Qwen3 primary; Gemini cross-fallback when `LLM_FALLBACK_ENABLED=true` |
+| Remote LLM (glm-5.2 / qwen3.5-397b) | 200k/266k context via OpenAI-compatible endpoint, glm-5.2 default for coding/GitHub |
+| Dual LLM (`LLM_PROVIDER`) | Local Qwen3 primary; remote/gemini cross-fallback when `LLM_FALLBACK_ENABLED=true` |
 | `/no_think` prefix | Qwen3 returns reasoning in `reasoning_content` field; prefix bypasses |
 | `-c 16384` context | Full context per slot for codereview/learn prompts (8192 too small) |
 | MCP primary, direct API fallback | Extensible tool access, graceful degradation |

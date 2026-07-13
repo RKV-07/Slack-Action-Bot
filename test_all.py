@@ -1426,5 +1426,106 @@ class TestClassifyNewCommands:
         assert self._make_state("release notes owner/repo")["command_type"] == "release_notes"
 
 
+# ══════════════════════════════════════════════════════════════════
+# Remote LLM (glm-5.2 / qwen3.5-397b)
+# ══════════════════════════════════════════════════════════════════
+
+class TestRemoteCompletion:
+    @patch("services.llm_service.requests.post")
+    def test_success(self, mock_post):
+        from services.llm_service import _remote_completion
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"choices": [{"message": {"content": "Hello from remote!"}}]},
+        )
+        result = _remote_completion("hi", max_tokens=50)
+        assert result == "Hello from remote!"
+
+    @patch("services.llm_service.requests.post")
+    def test_empty_response(self, mock_post):
+        from services.llm_service import _remote_completion
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"choices": [{"message": {"content": ""}}]},
+        )
+        result = _remote_completion("hi", max_tokens=50)
+        assert result == ""
+
+    @patch("services.llm_service.requests.post")
+    def test_http_error(self, mock_post):
+        from services.llm_service import _remote_completion
+        mock_post.return_value = MagicMock(status_code=500)
+        result = _remote_completion("hi", max_tokens=50)
+        assert result == ""
+
+    @patch("services.llm_service.requests.post")
+    def test_timeout(self, mock_post):
+        from services.llm_service import _remote_completion
+        import requests as req
+        mock_post.side_effect = req.Timeout("timed out")
+        result = _remote_completion("hi", max_tokens=50)
+        assert result == ""
+
+    @patch("services.llm_service.REMOTE_LLM_BASE_URL", "")
+    def test_no_url_returns_empty(self):
+        from services.llm_service import _remote_completion
+        result = _remote_completion("hi", max_tokens=50)
+        assert result == ""
+
+
+class TestLLMFallbackChain:
+    @patch("services.llm_service._remote_completion", return_value="")
+    @patch("services.llm_service._gemini_completion", return_value="gemini ok")
+    @patch("services.llm_service._local_completion", return_value="")
+    @patch("services.llm_service.LLM_PROVIDER", "local")
+    @patch("services.llm_service.LLM_FALLBACK_ENABLED", True)
+    def test_local_falls_back_to_gemini(self, mock_local, mock_gemini, mock_remote):
+        from services.llm_service import _chat_completion
+        assert _chat_completion("hi") == "gemini ok"
+
+    @patch("services.llm_service._gemini_completion", return_value="")
+    @patch("services.llm_service._local_completion", return_value="local ok")
+    @patch("services.llm_service.LLM_PROVIDER", "local")
+    @patch("services.llm_service.LLM_FALLBACK_ENABLED", True)
+    def test_local_primary_success(self, mock_local, mock_gemini):
+        from services.llm_service import _chat_completion
+        assert _chat_completion("hi") == "local ok"
+
+    @patch("services.llm_service._gemini_completion", return_value="")
+    @patch("services.llm_service._local_completion", return_value="")
+    @patch("services.llm_service._remote_completion", return_value="remote ok")
+    @patch("services.llm_service.LLM_PROVIDER", "local")
+    @patch("services.llm_service.LLM_FALLBACK_ENABLED", True)
+    def test_local_falls_back_to_remote(self, mock_remote, mock_local, mock_gemini):
+        from services.llm_service import _chat_completion
+        assert _chat_completion("hi") == "remote ok"
+
+    @patch("services.llm_service._local_completion", return_value="")
+    @patch("services.llm_service._remote_completion", return_value="")
+    @patch("services.llm_service._gemini_completion", return_value="")
+    @patch("services.llm_service.LLM_PROVIDER", "local")
+    @patch("services.llm_service.LLM_FALLBACK_ENABLED", True)
+    def test_all_fail_returns_empty(self, mock_local, mock_remote, mock_gemini):
+        from services.llm_service import _chat_completion
+        assert _chat_completion("hi") == ""
+
+
+class TestCheckRemoteLLM:
+    @patch("services.llm_service._remote_completion", return_value="ok")
+    def test_success(self, mock_remote):
+        from services.llm_service import check_remote_llm
+        assert check_remote_llm() is True
+
+    @patch("services.llm_service._remote_completion", return_value="")
+    def test_failure(self, mock_remote):
+        from services.llm_service import check_remote_llm
+        assert check_remote_llm() is False
+
+    @patch("services.llm_service.REMOTE_LLM_BASE_URL", "")
+    def test_no_url(self):
+        from services.llm_service import check_remote_llm
+        assert check_remote_llm() is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

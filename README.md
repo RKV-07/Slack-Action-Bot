@@ -86,6 +86,7 @@ GitHub lookups work for **public repos without a token**. Set `GITHUB_TOKEN` in 
 - **LangGraph** — StateGraph workflow orchestration with fan-out/fan-in
 - **Slack Bolt** — Socket Mode event handling
 - **Local Qwen3-8B** — LLM via llama-server (zero API cost, no data leaves machine)
+- **Remote LLM** — qwen3.5-397b / glm-5.2 via OpenAI-compatible endpoint (optional fallback)
 - **APScheduler** — SQLite-persisted reminder scheduling
 - **GitHub API** — Issue/PR lookup with TTL cache (works without token for public repos)
 - **MCP** — Model Context Protocol for extensible tool access (GitHub, Fetch, custom Slack server)
@@ -121,7 +122,7 @@ Slack-Action-Bot/
 │   ├── slack_search_service.py   # Real-time search via assistant.search.context
 │   └── slack_features.py        # Processing reaction decorator
 ├── reminders.db                 # SQLite persistent reminders
-├── test_all.py                  # 168 unit tests
+├── test_all.py                  # 180 unit tests
 ├── test_e2e.py                  # 57 end-to-end tests
 └── pyproject.toml               # Dependencies (uv-managed)
 ```
@@ -153,6 +154,8 @@ Slack-Action-Bot/
    GOOGLE_API_KEY=...              # optional, Gemini fallback when local fails
    GEMINI_MODEL=gemini-2.0-flash
    TAVILY_API_KEY=tvly-...         # optional, for /learn web search
+   REMOTE_LLM_BASE_URL=http://127.0.0.1:8000  # optional, qwen3.5-397b / glm-5.2
+   REMOTE_LLM_MODEL=glm-5.2                    # optional, default for coding/GitHub tasks
    ```
 
 3. Install dependencies:

@@ -4,6 +4,7 @@
 
 ### New Features
 - **Dual LLM provider**: `LLM_PROVIDER=local|gemini` with `LLM_FALLBACK_ENABLED` cross-fallback (local Qwen3 primary, Gemini safety net)
+- **Remote LLM fallback**: glm-5.2 (200k context, great for coding/GitHub) via OpenAI-compatible endpoint (automatic fallback chain: local → remote → gemini)
 - **Daily digest**: `/sab digest subscribe|unsubscribe|demo` — proactive GitHub issues/PRs via APScheduler cron
 - **Duplicate detection**: `/sab duplicate owner/repo "title"` — difflib similarity over open issues
 - **Release notes**: `/sab release notes owner/repo` — LLM-grouped notes from merged PRs
@@ -28,7 +29,8 @@
 - Added `build_initial_state` tests for `action_token` and `search_query` fields
 - Added `search_node`, `digest_node`, `duplicate_check_node`, `release_notes_node` unit tests
 - Added `TestE2ESearch` end-to-end tests (empty query, results, error, natural language, action_token)
-- All **225 tests passing** (168 unit + 57 e2e)
+- Added `TestRemoteCompletion`, `TestLLMFallbackChain`, `TestCheckRemoteLLM` for remote LLM
+- All **237 tests passing** (180 unit + 57 e2e)
 
 ---
 
@@ -125,8 +127,8 @@
 - `detect_github_refs` drops bare `#123`
 
 ### Tests
-- 168 unit tests + 57 end-to-end tests = **225 passing**
-- Coverage: classify_intent, github_service, codereview_service, llm_service, learn_service, reminder_service, mcp_slack_server, slack_summarize_service, graph nodes, workflow, handlers, search_node, digest_node, duplicate_check_node, release_notes_node
+- 180 unit tests + 57 end-to-end tests = **237 passing**
+- Coverage: classify_intent, github_service, codereview_service, llm_service, learn_service, reminder_service, mcp_slack_server, slack_summarize_service, graph nodes, workflow, handlers, search_node, digest_node, duplicate_check_node, release_notes_node, remote_llm
 
 ---
 
