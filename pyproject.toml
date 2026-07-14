@@ -1,4 +1,5 @@
 [project]
+package=false
 name = "slack-action-bot"
 version = "0.1.0"
 description = "Slack Advanced Actions Bot - Smart action context, reminders, and GitHub integration powered by LangGraph"
@@ -18,6 +19,8 @@ dependencies = [
     "dateparser>=1.4.1",
     "cachetools>=7.1.4",
 ]
+[tool.uv]
+package = false
 
 [tool.hatch.build.targets.wheel]
 packages = ["graph", "handlers", "services", "main.py", "config.py"]
