@@ -19,6 +19,9 @@ dependencies = [
     "cachetools>=7.1.4",
 ]
 
+[tool.uv]
+package = false
+
 [tool.hatch.build.targets.wheel]
 packages = ["graph", "handlers", "services", "main.py", "config.py"]
 
